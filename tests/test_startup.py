@@ -1,10 +1,7 @@
 # Tests that the SAGE window opens, has the correct title, and closes without errors.
 import unittest
-
 from PySide6.QtWidgets import QApplication
-
 from main import SageWindow
-
 
 class TestStartup(unittest.TestCase):
     @classmethod
