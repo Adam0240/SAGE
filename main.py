@@ -27,11 +27,37 @@ class SageWindow(QWidget):
         main_layout.setContentsMargins(40, 20, 40, 40)
         main_layout.setSpacing(0)
 
-        # Display the application name at the top of the screen.
+        # Arrange the title and mode button across the top.
+        header_layout = QHBoxLayout()
+
+        # Balance the button's width to keep the title centered.
+        header_layout.addSpacing(180)
+
         title = QLabel("STEAM Artificial Guidance Expert")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title.setStyleSheet("font-size: 36px; font-weight: bold;")
-        main_layout.addWidget(title)
+        header_layout.addWidget(title, stretch=1)
+
+        # Display Student Mode by default.
+        self.mode_button = QPushButton("Student Mode")
+        self.mode_button.setFixedSize(180, 50)
+        self.mode_button.setStyleSheet("""
+            QPushButton {
+                border: 4px solid black;
+                border-radius: 0px;
+                background-color: blue;
+                color: white;
+                font-size: 20px;
+                font-weight: bold;
+            }
+
+            QPushButton:focus {
+                border-color: red;
+            }
+        """)
+
+        header_layout.addWidget(self.mode_button)
+        main_layout.addLayout(header_layout)
 
         # Leave flexible space between the title and the avatar.
         main_layout.addStretch(2)
@@ -78,7 +104,6 @@ class SageWindow(QWidget):
 
                 QPushButton:hover {
                     border-color: #336699;
-                    background-color: green;
                 }
 
                 QPushButton:focus {
@@ -94,6 +119,14 @@ class SageWindow(QWidget):
 
         # Leave flexible space below the application buttons.
         main_layout.addStretch(1)
+
+    def keyPressEvent(self, event):
+        # End the application when the Escape key is pressed.
+        if event.key() == Qt.Key.Key_Escape:
+            QApplication.quit()
+        else:
+            # Keep the default behavior for other keys.
+            super().keyPressEvent(event)
 
 
 if __name__ == "__main__":
