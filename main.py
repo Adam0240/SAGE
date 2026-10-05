@@ -2,6 +2,7 @@
 
 import sys
 from PySide6.QtCore import Qt
+from login_dialog import LoginDialog
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
@@ -16,6 +17,11 @@ class SageWindow(QWidget):
     def __init__(self):
         # Set up the QWidget before adding the SAGE window settings.
         super().__init__()
+
+        # No administrator is logged in when SAGE starts.
+        self.current_user_id = None
+        self.current_user_name = None
+        self.current_user_role = None
 
         # Set the window title, starting size, and background color.
         self.setWindowTitle("SAGE")
@@ -41,6 +47,7 @@ class SageWindow(QWidget):
         # Display Student Mode by default.
         self.mode_button = QPushButton("Student Mode")
         self.mode_button.setFixedSize(180, 50)
+        self.mode_button.clicked.connect(self.handle_mode_button)
         self.mode_button.setStyleSheet("""
             QPushButton {
                 border: 4px solid black;
@@ -120,6 +127,32 @@ class SageWindow(QWidget):
         # Leave flexible space below the application buttons.
         main_layout.addStretch(1)
 
+    def handle_mode_button(self):
+        # A logged-in administrator can return to Student Mode.
+        if self.current_user_id is not None:
+            self.current_user_id = None
+            self.current_user_name = None
+            self.current_user_role = None
+            self.mode_button.setText("Student Mode")
+            return
+
+        # Student Mode opens the administrator login dialog.
+        dialog = LoginDialog(self)
+
+        if dialog.exec() == LoginDialog.DialogCode.Accepted:
+            self.current_user_id = dialog.user_id
+            self.current_user_name = dialog.user_name
+            self.current_user_role = dialog.user_role
+
+            role_labels = {
+                "boss_admin": "Admin Mode",
+                "steam_specialist": "STEAM Specialist",
+                "base_specialist": "Base Specialist",
+            }
+            self.mode_button.setText(
+                role_labels[self.current_user_role]
+            )
+    
     def keyPressEvent(self, event):
         # End the application when the Escape key is pressed.
         if event.key() == Qt.Key.Key_Escape:
