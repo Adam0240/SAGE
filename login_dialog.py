@@ -1,5 +1,6 @@
 # Login dialog for SAGE administrator accounts.
 
+from PySide6.QtCore import QObject, QThread, Signal, Slot
 from PySide6.QtWidgets import (
     QDialog,
     QFormLayout,
@@ -16,6 +17,41 @@ from services.authentication_service import AuthenticationService
 from services.password_service import PasswordService
 
 
+class LoginWorker(QObject):
+    # The result is either account details, None, or a database error.
+    completed = Signal(object)
+
+    def __init__(self, username: str, password: str):
+        super().__init__()
+        self.username = username
+        self.password = password
+
+    @Slot()
+    def run(self):
+        try:
+            # Create and use the database session in this worker thread.
+            with SessionLocal() as session:
+                authentication = AuthenticationService(
+                    UserRepository(session),
+                    PasswordService(),
+                )
+                user = authentication.authenticate(
+                    self.username,
+                    self.password,
+                )
+
+                if user is None:
+                    self.completed.emit(("invalid", None))
+                    return
+
+                # Copy account values before closing the database session.
+                details = (user.id, user.name, user.role)
+                self.completed.emit(("success", details))
+
+        except SQLAlchemyError:
+            self.completed.emit(("database_error", None))
+
+
 class LoginDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -23,10 +59,12 @@ class LoginDialog(QDialog):
         self.setWindowTitle("SAGE Login")
         self.setMinimumWidth(350)
 
-        # These values are filled in only after a successful login.
         self.user_id = None
         self.user_name = None
         self.user_role = None
+
+        self._thread = None
+        self._result = None
 
         layout = QVBoxLayout(self)
         form = QFormLayout()
@@ -46,11 +84,10 @@ class LoginDialog(QDialog):
         self.error_label.setStyleSheet("color: #ff7777;")
         layout.addWidget(self.error_label)
 
-        login_button = QPushButton("Log In")
-        login_button.clicked.connect(self.attempt_login)
-        layout.addWidget(login_button)
+        self.login_button = QPushButton("Log In")
+        self.login_button.clicked.connect(self.attempt_login)
+        layout.addWidget(self.login_button)
 
-        # Pressing Enter in the password field also attempts login.
         self.password_input.returnPressed.connect(self.attempt_login)
 
         self.setStyleSheet("""
@@ -75,34 +112,58 @@ class LoginDialog(QDialog):
         """)
 
     def attempt_login(self):
-        username = self.username_input.text()
-        password = self.password_input.text()
+        # Prevent repeated clicks from starting simultaneous login attempts.
+        if self._thread is not None:
+            return
 
-        try:
-            with SessionLocal() as session:
-                repository = UserRepository(session)
-                authentication = AuthenticationService(
-                    repository,
-                    PasswordService(),
-                )
-                user = authentication.authenticate(username, password)
+        self.error_label.setText("")
+        self.login_button.setEnabled(False)
+        self.login_button.setText("Connecting...")
 
-                if user is not None:
-                    # Copy the values before the database session closes.
-                    self.user_id = user.id
-                    self.user_name = user.name
-                    self.user_role = user.role
+        self._result = None
+        self._thread = QThread(self)
+        self._worker = LoginWorker(
+            self.username_input.text(),
+            self.password_input.text(),
+        )
+        self._worker.moveToThread(self._thread)
 
-        except SQLAlchemyError:
+        self._thread.started.connect(self._worker.run)
+        self._worker.completed.connect(self._receive_result)
+        self._worker.completed.connect(self._thread.quit)
+        self._thread.finished.connect(self._worker.deleteLater)
+        self._thread.finished.connect(self._finish_attempt)
+        self._thread.start()
+
+    @Slot(object)
+    def _receive_result(self, result):
+        self._result = result
+
+    @Slot()
+    def _finish_attempt(self):
+        # This runs after the worker thread has stopped.
+        status, details = self._result
+
+        self._thread.deleteLater()
+        self._thread = None
+        self._worker = None
+
+        self.login_button.setEnabled(True)
+        self.login_button.setText("Log In")
+
+        if status == "success":
+            self.user_id, self.user_name, self.user_role = details
+            self.accept()
+        elif status == "database_error":
             self.error_label.setText(
                 "Database unavailable. Try again later."
             )
             self.password_input.clear()
-            return
-
-        if self.user_id is None:
+        else:
             self.error_label.setText("Invalid username or password.")
             self.password_input.clear()
-            return
 
-        self.accept()
+    def reject(self):
+        # Keep the dialog alive until an active worker has stopped.
+        if self._thread is None:
+            super().reject()

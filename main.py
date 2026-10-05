@@ -3,6 +3,7 @@
 import sys
 from PySide6.QtCore import Qt
 from login_dialog import LoginDialog
+from services.session_service import SessionService
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
@@ -18,10 +19,9 @@ class SageWindow(QWidget):
         # Set up the QWidget before adding the SAGE window settings.
         super().__init__()
 
-        # No administrator is logged in when SAGE starts.
-        self.current_user_id = None
-        self.current_user_name = None
-        self.current_user_role = None
+        # Initialize the application in Student Mode.
+        self.session_service = SessionService()
+        self.session_state = self.session_service.start()
 
         # Set the window title, starting size, and background color.
         self.setWindowTitle("SAGE")
@@ -45,7 +45,7 @@ class SageWindow(QWidget):
         header_layout.addWidget(title, stretch=1)
 
         # Display Student Mode by default.
-        self.mode_button = QPushButton("Student Mode")
+        self.mode_button = QPushButton(self.session_state.button_label)
         self.mode_button.setFixedSize(180, 50)
         self.mode_button.clicked.connect(self.handle_mode_button)
         self.mode_button.setStyleSheet("""
@@ -128,30 +128,22 @@ class SageWindow(QWidget):
         main_layout.addStretch(1)
 
     def handle_mode_button(self):
-        # A logged-in administrator can return to Student Mode.
-        if self.current_user_id is not None:
-            self.current_user_id = None
-            self.current_user_name = None
-            self.current_user_role = None
-            self.mode_button.setText("Student Mode")
+        # Clicking the mode button while logged in returns to Student Mode.
+        if self.session_state.user_id is not None:
+            self.session_state = self.session_service.log_out()
+            self.mode_button.setText(self.session_state.button_label)
             return
 
         # Student Mode opens the administrator login dialog.
         dialog = LoginDialog(self)
 
         if dialog.exec() == LoginDialog.DialogCode.Accepted:
-            self.current_user_id = dialog.user_id
-            self.current_user_name = dialog.user_name
-            self.current_user_role = dialog.user_role
-
-            role_labels = {
-                "boss_admin": "Admin Mode",
-                "steam_specialist": "STEAM Specialist",
-                "base_specialist": "Base Specialist",
-            }
-            self.mode_button.setText(
-                role_labels[self.current_user_role]
+            self.session_state = self.session_service.log_in(
+                user_id=dialog.user_id,
+                user_name=dialog.user_name,
+                role=dialog.user_role,
             )
+            self.mode_button.setText(self.session_state.button_label)
     
     def keyPressEvent(self, event):
         # End the application when the Escape key is pressed.

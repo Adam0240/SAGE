@@ -20,7 +20,11 @@ database_url = URL.create(
     database=settings["POSTGRES_DB"],
 )
 
-engine = create_engine(database_url, pool_pre_ping=True)
+engine = create_engine(
+    database_url,
+    pool_pre_ping=True,
+    connect_args={"connect_timeout": 3},
+)
 
 # Sessions will be used by repositories to work with database records.
 SessionLocal = sessionmaker(bind=engine)
