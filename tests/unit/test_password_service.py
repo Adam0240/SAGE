@@ -65,6 +65,7 @@ class TestPasswordChange(unittest.TestCase):
                     password_hash=passwords.hash_password(old_password), is_active=True)
         repository = Mock(spec=UserRepository)
         repository.get_by_id.return_value = user
+        repository.lock_accounts.return_value = {1: user}
         repository.get_by_username.return_value = user
         repository.update.side_effect = lambda account: account
         authentication = AuthenticationService(repository, passwords)

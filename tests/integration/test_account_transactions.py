@@ -8,7 +8,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
-from database.connection import Base, database_url
+from database.connection import Base, get_database_url
 from database.models import User
 from database.user_repository import UserRepository
 from database import account_operations
@@ -17,6 +17,7 @@ from database import account_operations
 class TestAccountTransactions(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        database_url = get_database_url()
         test_url = database_url.set(database="sage_test")
         if test_url.database == database_url.database:
             raise RuntimeError("The application and test databases must be different.")

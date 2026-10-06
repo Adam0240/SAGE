@@ -1,105 +1,168 @@
 # SAGE code review
 
-Reviewed: October 6, 2026. Scope: the current working tree, following `AI_Testing/agent.md`. The user explicitly deferred Issue #10 and the formal Initializing SAGE use-case comparison.
+Reviewed October 6, 2026. This review makes no application, configuration, test, or database changes.
 
-## Review summary
+Follow-up: the user subsequently authorized implementing all six findings and
+validating the fixes. That work and its validation are recorded under **Solution Implemented**
+below each finding; the original review and its test results remain historical findings.
 
-SAGE has a sensible early architecture for a desktop STEAM-room assistant: PySide6 handles presentation, small services handle authentication and session identity, repositories handle persistence, and Alembic tracks schema changes. Argon2 password hashing, inactive-account rejection, database constraints, worker-owned database sessions, and transactional administrator setup are good foundations.
+## Summary and scope
 
-The implemented product is currently a student-mode interface shell plus staff login/logout. Tutorials, AI guidance, equipment operations, and authenticated account management are not implemented. The principal concerns are database privilege separation, brittle startup configuration, login failure recovery, text visibility, and gaps in onboarding and workflow tests. A framework rewrite is not warranted by this review.
+The implementation provides a Student Mode startup screen, asynchronous staff authentication, logout, and account creation/editing/deletion with service-level role checks. Passwords use salted Argon2 hashes, account display results exclude hashes, and account writes use transaction context managers. The ORM model and initial migration agree on columns, defaults, unique usernames, and allowed roles.
 
-### Files reviewed
+The main concerns are concurrent account changes that can invalidate permission checks or remove every active Boss Admin, login failures that leave the dialog waiting indefinitely, configuration-dependent startup, and an account screen that gives Work Study Assistants no usable controls. The root README also directs users to a test command that discovers no tests.
 
-- Application/UI: `main.py`, `login_dialog.py`.
-- Database: `database/connection.py`, `database/models.py`, `database/user_repository.py`, `database/setup_admin.py`.
-- Services: `services/authentication_service.py`, `services/password_service.py`, `services/session_service.py`, `services/__init__.py`.
-- Migrations: `alembic.ini`, `migrations/env.py`, `migrations/script.py.mako`, `migrations/README`, `migrations/versions/fadb4cb3dce0_create_users_table.py`.
-- Tests: `tests/test_authentication_service.py`, `tests/test_password_service.py`, `tests/test_session_service.py`, `tests/test_startup.py`, `tests/test_user_repository.py`.
-- Configuration/documentation: `compose.yaml`, `requirements.txt`, `README.md`, `.gitignore`, `AI_Testing/agent.md`.
+Files reviewed:
 
-Comments and inactive configuration examples were included. No live database privileges, records, or deployed schema were inspected. Virtual-environment and generated cache contents were excluded from source review.
+- Application/UI: `main.py`, `login_dialog.py`, `sage_apps/account_management_app.py`.
+- Database: `database/connection.py`, `database/models.py`, `database/user_repository.py`, `database/account_operations.py`, `database/setup_admin.py`.
+- Services: `services/account_service.py`, `services/authentication_service.py`, `services/password_service.py`, `services/session_service.py`, `services/__init__.py`.
+- Migrations: `migrations/env.py`, `migrations/versions/fadb4cb3dce0_create_users_table.py`, `migrations/script.py.mako`, `migrations/README`, `alembic.ini`.
+- Tests: `tests/conftest.py`, `tests/ui/conftest.py`, all six test modules in `tests/unit`, `tests/ui`, and `tests/integration`, and `tests/README.md`.
+- Configuration/documentation: `compose.yaml`, `requirements.txt`, `pytest.ini`, `README.md`, `.gitignore`, and the task instructions in `AI_Testing/agent.md`. Comments were reviewed with their surrounding code. Secret values in `.env` were not printed or included in this report.
 
-## Findings ordered by severity
+## Findings, ordered by severity
 
-### 1. High before deployment: the application uses the database bootstrap credentials
+### 1. High — Concurrent operations can remove the last active Boss Admin
 
-**Locations:** `compose.yaml:8`; `database/connection.py:16`.
+**Location:** `services/account_service.py:207` and `services/account_service.py:251`; `database/user_repository.py:16` and `database/user_repository.py:25`.
 
-**Problem:** Compose supplies `POSTGRES_USER` and `POSTGRES_PASSWORD` to initialize PostgreSQL, and the desktop application uses those same settings for ordinary runtime connections. The official PostgreSQL image initializes this user as the database superuser on a fresh data volume. There is no separate restricted runtime account in the repository. This is a configuration finding; the privileges of any already-existing local database were not verified.
+**Problem:** Deletion and demotion count active bosses using ordinary unlocked reads. A transaction groups the check and write but does not serialize competing transactions. With two active bosses, two concurrent self-demotions can each observe two bosses, each pass the check, and commit changes to different rows. Concurrent removal operations can produce the same invariant failure. The database has no constraint enforcing an active boss.
 
-**Impact:** On the standard fresh setup, database access from the desktop process has privileges far beyond reading accounts. Anyone who can obtain its database credentials can bypass the application's staff login and change accounts or schema directly. Binding the database port to localhost limits remote exposure but does not separate local student access from database administration.
+**Impact:** SAGE can end up with no active Boss Admin. If lower-role accounts remain, `database/setup_admin.py` refuses bootstrap because the users table is nonempty, so normal administration cannot restore access.
 
-**Suggested fix:** Use distinct credentials for provisioning/migrations and application runtime. Grant the runtime account only the permissions needed by implemented workflows. For student-accessible machines, ensure OS permissions protect credentials; if students can access the client files or shared accounts will be used across machines, put privileged account and equipment operations behind an authenticated backend. Retain localhost binding for local development. This must be addressed before deployment to untrusted users; a trusted developer-only environment can defer it.
+**Suggested fix:** Serialize all operations that can remove active Boss Admin status with a shared PostgreSQL transaction advisory lock or another common lock. Acquire it before reading the boss count, then re-read and validate before writing. Ensure deletion, demotion, and any future deactivation use the same lock. Add a two-connection concurrency test that forces both operations to overlap and verifies one is rejected.
 
-**Reference:** The [official PostgreSQL image entrypoint](https://github.com/docker-library/postgres/blob/master/docker-entrypoint.sh) initializes the configured user through `initdb` and identifies its password as the superuser password.
+**Evidence limit:** This is a source-based concurrency finding; it was not exercised against PostgreSQL during this read-only review.
 
-### 2. Medium: missing configuration prevents even Student Mode from starting
+**Solution Implemented**
 
-**Locations:** `database/connection.py:11`; `database/connection.py:16`; `main.py:5`.
+Deletion and role changes now share a PostgreSQL transaction lock, so only one operation at a time can check and remove active Boss Admin status. Accounts are refreshed after acquiring the lock, and a shared check prevents removing the final active Boss Admin; future deactivation must follow the same locking rule. Concurrency and rollback tests confirmed the protection, with 50 tests and 104 subtests passing when this fix was completed.
 
-**Problem:** Database settings are read and indexed at import time. A missing `.env` file or key raises `KeyError` before the main window can be constructed. Importing `main.py` imports `LoginDialog`, which imports database configuration, so this affects startup even when the user does not attempt staff login. Supplying settings solely through process environment variables also does not satisfy these direct file lookups.
+### 2. High — Account permissions can become stale between validation and the write
 
-**Impact:** A fresh checkout following the README cannot start without undocumented configuration. Authentication and GUI tests also require that configuration despite not connecting to PostgreSQL. Students cannot reach the default screen if the file is absent.
+**Location:** `services/account_service.py:111`, `services/account_service.py:172`, `services/account_service.py:181`, and `database/user_repository.py:16`.
 
-**Evidence:** Patching configuration loading to return an empty mapping reproduced `KeyError: 'POSTGRES_USER'` in an isolated Python process. No existing configuration file was edited.
+**Problem:** Reading actor and target roles from the database protects against an already-stale UI, but neither record is locked. For example, a STEAM Specialist can read a target as a Work Study Assistant, begin hashing a replacement password, and then write it after another transaction has promoted the target to Boss Admin. The password update does not condition its write on the target's original role. Actor demotion or deactivation during an operation has a similar gap.
 
-**Suggested fix:** Validate configuration explicitly and report missing setting names clearly. Document and provide a non-secret example configuration. Prefer deferring database initialization until a database-backed operation is needed, and separate the model base from runtime connection configuration so model imports and isolated tests do not require credentials. If environment variables are supported, define their precedence over file values.
+**Impact:** An operation may commit using permissions that no longer apply, including resetting a newly promoted administrator's password.
 
-### 3. Medium: an unexpected worker exception leaves login stuck
+**Suggested fix:** Lock actor and target rows in a consistent order before authorizing mutations, and hold those locks through commit. Coordinate this with the shared Boss Admin invariant lock from finding 1. Alternatively, use conditional/versioned writes and reject/retry when authorization-relevant values change. Add an overlapping promotion/password-reset test; the existing sequential stale-target test does not cover this interleaving.
 
-**Locations:** `login_dialog.py:30`; `login_dialog.py:51`; `login_dialog.py:132`; `login_dialog.py:145`; `login_dialog.py:166`.
+**Evidence limit:** Inferred from the unlocked reads and unconditional ORM writes; no database concurrency test was run.
 
-**Problem:** `LoginWorker.run()` catches only `SQLAlchemyError`. A different exception skips the `completed` signal. Thread shutdown is connected to that signal, so the worker thread's event loop remains running after the failing slot returns. `_finish_attempt()` also assumes `_result` is always a tuple.
+**Solution Implemented**
 
-**Impact:** The login button stays disabled with no explanatory message. Further attempts are rejected, and `reject()` prevents dismissal while `_thread` exists. The UI event loop remains responsive, but the login workflow is stranded.
+Account mutations now lock the actor and target rows in ascending account-ID order before checking permissions, keeping those locks until commit or rollback. Deletion and role changes acquire the Boss Admin lock first, and waiting operations refresh account values before deciding whether they are allowed. Overlapping promotion/password-reset, actor-demotion, and opposing-update tests verified the behavior, with the full suite passing 56 tests and 108 subtests.
 
-**Evidence:** An in-memory probe used the actual Qt thread with mocked authentication. Injecting `RuntimeError` left the thread present, the login button disabled, and the error label empty after the worker returned. Success, invalid credentials, and `SQLAlchemyError` all cleaned up correctly. The probe explicitly stopped its remaining thread afterward.
+### 3. Medium — Unexpected login exceptions leave the dialog stuck
 
-**Suggested fix:** Guarantee a terminal outcome and thread shutdown for every worker execution. Handle unexpected exceptions at the worker boundary, show a generic failure, and log safe diagnostic information without credentials. Make UI cleanup tolerate a missing result and perform cleanup before interpreting the outcome. Add a regression test for the unexpected-exception path.
+**Location:** `login_dialog.py:51`, `login_dialog.py:133`, `login_dialog.py:145`, and `login_dialog.py:166`.
 
-### 4. Medium: a connected but stalled database can make login indefinitely non-dismissable
+**Problem:** `LoginWorker.run()` catches only `SQLAlchemyError`. An unexpected non-database exception exits without emitting `completed`. Thread shutdown depends on that signal, leaving the QThread event loop running, the login button disabled, and `reject()` unable to close the dialog. Additionally, `_finish_attempt()` unpacks `_result` before cleanup and assumes a result always exists.
 
-**Locations:** `database/connection.py:26`; `login_dialog.py:166`.
+**Impact:** A staff login can leave the modal interface permanently waiting until the application is forcibly terminated. AccountWorker already handles unexpected exceptions more defensively.
 
-**Problem:** The configured three-second `connect_timeout` bounds connection establishment, but there is no application-configured statement or lock-wait timeout. Once connected, a query waiting behind an exclusive schema lock or another database stall can keep the login worker occupied. The dialog deliberately blocks rejection throughout that period.
+**Suggested fix:** Guarantee exactly one completion result and worker shutdown on all ordinary exception paths, return a generic safe error to the interface, and clean up/re-enable controls before interpreting the result. Handle a missing result defensively. Add real QThread login tests for success, invalid credentials, SQLAlchemy errors, unexpected exceptions, retry, and closing during an attempt.
 
-**Impact:** Students or staff may remain trapped in the modal login dialog even though the UI itself still processes events. An existing server timeout could limit this, but none is established by this repository.
+**Evidence:** A read-only probe replaced `login_dialog.SessionLocal` with a callable raising `RuntimeError`. Calling the worker directly propagated the exception and emitted zero completion signals. Existing main-window login tests mock the entire LoginDialog and therefore do not test its worker lifecycle.
 
-**Suggested fix:** Configure an appropriate login-query timeout and a recoverable timeout outcome. If dismissal during an attempt is supported, retain ownership of the worker until it finishes and safely ignore late results; do not destroy a running thread. A cancellation request alone does not interrupt a blocking database call. Test delayed/timeout behavior with a controlled fake.
+**Solution Implemented**
 
-**Validation limit:** This finding follows from configuration and control flow; no live blocking query was created. PostgreSQL documents [statement and lock timeouts](https://www.postgresql.org/docs/17/runtime-config-client.html).
+The login worker now emits one completion result after database session cleanup, catches unexpected exceptions with a safe error message, and clears its stored password. The dialog cleans up the stopped thread and restores controls before handling the result, permits retry even if no result arrives, and blocks closing while a worker is active. Six new tests cover real login threads, success, invalid credentials, database/unexpected/session-close errors, retry, missing results, and closing or repeated submissions during login; all 45 unit/UI tests and 117 subtests passed.
 
-### 5. Medium: title and avatar text can be black on black
+### 4. Medium — Missing local configuration prevents even Student Mode startup
 
-**Locations:** `main.py:29`; `main.py:44`; `main.py:76`.
+**Location:** `database/connection.py:11` and `database/connection.py:16`; `main.py:16`; `README.md:11`.
 
-**Problem:** The main window specifies a black background, but the title and avatar styles do not specify their foreground colors. Their text therefore depends on the platform palette.
+**Problem:** Importing the UI imports the database connection module, which indexes mandatory values from the root `.env` immediately. That file is ignored by Git, no example configuration is provided, and the root README does not explain how to create it. Missing configuration raises `KeyError` before QApplication or the Student Mode window is created. Process environment settings alone do not supply these values because the code reads `dotenv_values()` directly.
 
-**Impact:** On a light system palette, the title and avatar dots become unreadable against the background. Existing startup tests check visibility of widgets, not visibility of their contents.
+**Impact:** A fresh checkout cannot follow the documented launch instructions successfully, and anonymous startup depends on staff database configuration even though constructing Student Mode does not query the database. Unit tests also inherit this configuration dependency through imports.
 
-**Evidence:** With Qt's offscreen platform, both labels resolved to foreground color `#000000` after the window was shown and styles were applied. This confirms the palette dependency; native display appearance was not visually inspected.
+**Suggested fix:** Validate settings explicitly with a useful configuration message and support documented environment overrides. Initialize database-dependent components when needed so the anonymous interface can open without credentials, if that is the intended startup contract. Provide a secret-free `.env.example` and document environment creation, dependency installation, Compose startup, `alembic upgrade head`, and `python -m database.setup_admin` for a new installation.
 
-**Suggested fix:** Explicitly set a contrasting text color for both labels or a suitable shared label style. Check appearance under supported light/dark themes.
+**Evidence:** A read-only probe mocked `dotenv.dotenv_values` to return an empty dictionary and evaluated `database/connection.py`; it raised `KeyError('POSTGRES_USER')` without opening a database connection.
 
-### 6. Medium: onboarding and test instructions are incomplete and outdated
+**Solution Implemented**
 
-**Locations:** `README.md:11`; `README.md:23`; `README.md:31`; `tests/test_user_repository.py:19`.
+Database settings and sessions now initialize only when requested, with explicit validation, environment overrides, and actionable messages that never reveal passwords, allowing Student Mode to open without database credentials. Added a secret-free `.env.example` and installation instructions covering the virtual environment, dependencies, Compose startup, migrations, and first-admin bootstrap, while updating login, bootstrap, and Alembic to use the lazy configuration. All 68 tests and 138 subtests passed, including startup without credentials and configuration recovery; Compose validation and offline migration SQL generation also succeeded without starting containers or applying migrations.
 
-**Problem:** The README assumes a pre-existing virtual environment and describes a blank window. It omits dependency installation, required environment settings, PostgreSQL provisioning, migrations, initial administrator setup, and the `sage_test` database required by the documented full-suite command. Compose provisions the application database, not the separate test database.
+### 5. Medium — Work Study Assistants cannot change their own password through the UI
 
-**Impact:** A new contributor cannot reproduce startup or the advertised full test run using the documented steps. The repository presents less functionality than actually exists.
+**Location:** `sage_apps/account_management_app.py:98`, `sage_apps/account_management_app.py:100`, and `sage_apps/account_management_app.py:192`; `services/account_service.py:132`.
 
-**Suggested fix:** Document Python/environment setup, dependency installation, configuration keys, database startup, `alembic upgrade head`, and `python -m database.setup_admin`. Describe current login/logout and placeholder functionality accurately. Separate quick tests from PostgreSQL integration tests, and explain explicit test-database provisioning and write behavior. Avoid promising a successful full-suite result without its prerequisites.
+**Problem:** The main window enables Account Management for every staff role. For `base_specialist`, that dialog builds only a Create Account tab, disables its Create button, and never builds any self-edit/password controls. AccountService explicitly permits an assistant to update their own account, but the interface provides no route to that operation.
 
-### 7. Medium: login integration, administrator setup, and migrations lack regression coverage
+**Impact:** Assistants get a nonfunctional account screen and must ask another staff member to change their password. Current tests verify the disabled creation button but do not require usable self-service controls.
 
-**Locations:** `tests/test_startup.py:38`; `tests/test_user_repository.py:31`; `database/setup_admin.py:15`; `migrations/versions/fadb4cb3dce0_create_users_table.py:21`.
+**Suggested fix:** Add a self-service form for assistants that submits `update_account(actor_id, actor_id, password=...)` without listing other accounts. Keep staff creation and account-list permissions restricted. Add a UI test exercising an assistant's password change.
 
-**Problem:** Startup tests check the default mode and placeholder widgets but do not exercise the login dialog or the main window's authenticated transition/logout path. There are no existing administrator-bootstrap tests. Repository tests build tables from ORM metadata rather than applying Alembic migrations.
+**Evidence:** An offscreen probe constructed the assistant dialog and found exactly one tab, `Create Account`, with creation disabled.
 
-**Impact:** The worker failure in finding 3 is not detected by the existing suite. Bootstrap validation/transaction regressions and broken migrations can also escape coverage even if repository tests pass. The model and migration currently agree by static inspection, but that is not an executed migration test.
+**Solution Implemented**
 
-**Suggested fix:** Prioritize meaningful login lifecycle tests for success, failure, repeated submission, and cleanup, plus main-window login/logout integration with a fake dialog. Add bootstrap tests for existing accounts and invalid inputs; verify its concurrency protection in a disposable PostgreSQL integration environment. Test migration application and essential constraints against a fresh disposable database. Do not replace PostgreSQL-specific checks with SQLite-only tests.
+Work Study Assistants now get a My Password form with password confirmation and a minimum-length check, submitting only their own account ID through the existing threaded update operation. Their screen neither lists other accounts nor exposes creation/deletion controls, and successful updates clear the password fields while failures permit retry. Three new UI tests verified validation, a real threaded password change that accepts the new password and rejects the old one, and recovery after failure; the full suite passed 71 tests and 141 subtests.
 
+### 6. Medium — The documented test command discovers zero tests
 
+**Location:** `README.md:31` and `README.md:34`; test subdirectories under `tests/`.
 
+**Problem:** The root README recommends `python -m unittest discover -s tests -v`. In the available environment it does not recurse into the current test directories and runs zero tests. The README's description of one startup test and an `OK` result is outdated. The project now uses pytest configuration and directory markers, and `tests/README.md` already documents the appropriate runner.
+
+**Impact:** Developers following the main README receive no application validation and may miss regressions.
+
+**Suggested fix:** Replace the command with pytest instructions, distinguishing the safe unit/UI suite from integration tests that require and modify `sage_test`. Update the UI description at `README.md:23`, which still describes a blank window, and link to `tests/README.md` for details. Add a CI collection check that fails when expected tests are absent.
+
+**Evidence:** Running the exact documented discovery command reported `Ran 0 tests` and `NO TESTS RAN`.
+
+**Solution Implemented**
+
+The root README now uses pytest commands, distinguishes database-free unit/UI tests from PostgreSQL integration tests, and describes the current interface. Added a Windows GitHub Actions workflow that checks test collection from every expected module before running unit/UI tests, plus a `--check-collection` guard that fails when any required module contributes no tests. Local validation collected all 71 tests, correctly rejected an intentionally excluded module, and passed 71 tests with 141 subtests; the new workflow has not yet run on GitHub.
+
+## Initializing SAGE use case
+
+**Assessment: partially supported, with acceptance limits.** No formal use-case specification or acceptance criteria for “Initializing SAGE” were found in the reviewed repository, so this assessment uses the observable startup behavior rather than asserting compliance with an unavailable specification.
+
+- With the current dependencies and configuration present, SageWindow construction starts an anonymous Student Mode session, displays the title/avatar placeholder/three application buttons, and keeps Account Management disabled. The existing offscreen startup test passes.
+- Staff login is designed to run database access and password verification outside the GUI thread. Mode labels, authenticated identity, logout, cancelled login, and account-dialog dispatch pass mocked UI tests. Real database-backed login was not tested here.
+- A reachable database is not queried just to construct the main window, but a missing `.env` still prevents imports and therefore startup (finding 4). Login recovery is incomplete (finding 3).
+- The avatar is explicitly a placeholder; application buttons 2 and 3 are enabled but have no click handlers or visible labels. Student Mode therefore offers no implemented application workflow. If initialization requires launching usable student applications or initializing an AI subsystem, those behaviors are not implemented in the reviewed code.
+- First-administrator bootstrap exists and locks/rechecks the users table before inserting, but installation and bootstrap steps are absent from the root README. Existing users cannot have roles changed through AccountWorker/the dialog even though a transactional `change_role` operation exists. These are implementation boundaries to compare against the actual use-case specification.
+
+## Test results and verification limits
+
+The existing `.venv` was available; no packages were installed.
+
+| Check | Result |
+| --- | --- |
+| `.\.venv\Scripts\python.exe -B -m pytest tests/unit tests/ui -q -p no:cacheprovider` | **36 passed, 100 subtests passed in 2.55 seconds.** Database operations were mocked; Qt used the existing offscreen test configuration. |
+| `.\.venv\Scripts\python.exe -B -m unittest discover -s tests -v` | **Zero tests discovered; no tests ran.** This is not a passing application test suite. |
+| `.\.venv\Scripts\python.exe -B -m pip check` | **No broken requirements found.** |
+| Installed package metadata compared with every pin in `requirements.txt` | **All installed versions matched the pins.** This does not establish availability or reproducibility on another platform. |
+| Read-only probes of missing configuration, unexpected LoginWorker failure, assistant dialog controls | Confirmed the observations described in findings 3–5. No database connections or writes were performed by these probes. |
+| Seven integration tests in `tests/integration/test_account_transactions.py` | **Not run.** `setUpClass()` calls `Base.metadata.create_all()` and tests insert/update/delete records in `sage_test`; running them would violate the task's prohibition on changing the database. Database availability was not established. |
+| Alembic upgrade/downgrade, bootstrap, live authentication, live account operations, concurrency | **Not run.** Reviewed statically; no database changes were authorized. |
+| Docker/Compose runtime checks | **Not run.** Docker was not started. Compose was inspected statically. |
+
+The integration tests deliberately share one outer transaction and database connection through savepoints (`tests/integration/test_account_transactions.py:33`). They exercise wrapper/session behavior and rollback, but do not prove commit visibility from an independent connection. They also create tables from ORM metadata rather than applying Alembic history. Retain these tests and add isolated migration and independent-connection commit/concurrency checks when database testing is authorized.
+
+## Other observations
+
+- Compose binds PostgreSQL and Adminer to loopback, persists PostgreSQL data, and waits for database health before starting Adminer. Runtime behavior, image availability, and effective database grants were not verified. Application role checks assume trusted access to the Python process and database credentials; they are not a separate database authorization boundary.
+- The migration matches the current model; there is no source-level schema mismatch identified. Username normalization occurs in service/bootstrap code rather than in a database case-insensitive uniqueness constraint, so external writers must preserve that convention.
+- No normal-path synchronous database query or password hash was found in the UI handlers. A three-second connection timeout does not bound every possible database wait; long queries or lock waits can still keep a dialog busy and prevent closing while a worker runs. Consider statement/lock timeouts and a defined cancellation policy if bounded response time is required.
+- Role labels are duplicated in `services/session_service.py:6` and `sage_apps/account_management_app.py:27`. `PasswordService.needs_rehash()` at `services/password_service.py:26` has no caller. Centralize labels and either implement a transactional rehash-on-login policy or remove the unused method until needed.
+- The comment at `database/connection.py:10` says `.env` is beside that Python file, but the code reads the repository root. The header of `services/account_service.py:1` describes only adding users although the class handles multiple account operations. `.gitignore` lists `.env` twice. These are minor cleanup items.
+
+Only `AI_Testing/code_review.md` was changed by the original read-only review. The
+subsequently authorized implementation also changed the repository/service code,
+unit/UI tests, and test documentation and added concurrency and login test modules,
+as detailed under findings 1, 2, 3, and 4. Finding 4 also updated database configuration,
+bootstrap/migration setup, Compose, the root README, and the example environment file.
+Pre-existing edits to the task instructions were left intact. No
+commits, branches, pushes, pull requests, issue updates, or board changes were made.
+
+Findings 5 and 6 subsequently added assistant password controls and their tests,
+updated the pytest documentation, and added the collection guard and local GitHub
+Actions workflow file. Each of the six findings now has a concise implementation note;
+the original findings, line references, and review test results above are historical.

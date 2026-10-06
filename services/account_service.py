@@ -44,7 +44,7 @@ class AccountService:
     ) -> User:
         # Look up the person making the change. The displayed mode in the
         # interface is not used to decide what this person may do.
-        actor = self.user_repository.get_by_id(actor_id)
+        actor = self.user_repository.lock_accounts(actor_id).get(actor_id)
 
         if actor is None or not actor.is_active:
             raise PermissionError("An active staff account is required.")
@@ -106,10 +106,10 @@ class AccountService:
         username: str | None = None,
         password: str | None = None,
     ) -> User:
-        # Read both accounts from the database so permission decisions use
-        # their current roles, not values displayed by the interface.
-        actor = self.user_repository.get_by_id(actor_id)
-        target = self.user_repository.get_by_id(target_id)
+        # Lock both accounts before authorizing or hashing a replacement password.
+        accounts = self.user_repository.lock_accounts(actor_id, target_id)
+        actor = accounts.get(actor_id)
+        target = accounts.get(target_id)
 
         if actor is None or not actor.is_active:
             raise PermissionError("An active staff account is required.")
@@ -177,9 +177,12 @@ class AccountService:
         return self.user_repository.update(target)
 
     def delete_account(self, actor_id: int, target_id: int) -> None:
-        # Read current account roles before deciding whether deletion is allowed.
-        actor = self.user_repository.get_by_id(actor_id)
-        target = self.user_repository.get_by_id(target_id)
+        # Serialize removals before reading roles or counting active bosses.
+        self.user_repository.lock_boss_admin_status()
+        # Advisory lock first, then account rows in ascending ID order.
+        accounts = self.user_repository.lock_accounts(actor_id, target_id)
+        actor = accounts.get(actor_id)
+        target = accounts.get(target_id)
 
         if actor is None or not actor.is_active:
             raise PermissionError("An active staff account is required.")
@@ -203,17 +206,9 @@ class AccountService:
 
         # Never remove the only active Boss Admin. Another active Boss Admin
         # must exist before this account can be deleted.
-        if target.role == "boss_admin" and target.is_active:
-            active_bosses = [
-                user
-                for user in self.user_repository.get_all()
-                if user.role == "boss_admin" and user.is_active
-            ]
-
-            if len(active_bosses) <= 1:
-                raise PermissionError(
-                    "The last active Boss Admin cannot be deleted."
-                )
+        self._require_another_active_boss(
+            target, "The last active Boss Admin cannot be deleted."
+        )
 
         # The caller commits or rolls back the database transaction.
         self.user_repository.delete(target)
@@ -224,9 +219,12 @@ class AccountService:
         target_id: int,
         new_role: str,
     ) -> User:
-        # Check the actor's current database role rather than the UI label.
-        actor = self.user_repository.get_by_id(actor_id)
-        target = self.user_repository.get_by_id(target_id)
+        # Promotions also take the common lock, keeping role changes ordered.
+        self.user_repository.lock_boss_admin_status()
+        # Advisory lock first, then account rows in ascending ID order.
+        accounts = self.user_repository.lock_accounts(actor_id, target_id)
+        actor = accounts.get(actor_id)
+        target = accounts.get(target_id)
 
         if actor is None or not actor.is_active:
             raise PermissionError("An active Boss Admin is required.")
@@ -247,20 +245,23 @@ class AccountService:
             return target
 
         # Removing Boss Admin status requires another active Boss Admin.
-        if target.role == "boss_admin" and target.is_active:
-            active_bosses = [
-                user
-                for user in self.user_repository.get_all()
-                if user.role == "boss_admin" and user.is_active
-            ]
-
-            if len(active_bosses) <= 1:
-                raise PermissionError(
-                    "The last active Boss Admin cannot lose that role."
-                )
+        self._require_another_active_boss(
+            target, "The last active Boss Admin cannot lose that role."
+        )
 
         target.role = new_role
 
         # The caller commits or rolls back the database transaction.
         return self.user_repository.update(target)
-    
+
+    def _require_another_active_boss(self, target: User, message: str) -> None:
+        # The caller must hold lock_boss_admin_status() through transaction end.
+        # Future deactivation must acquire that lock, then actor/target row locks,
+        # before authorizing and using this check to set is_active=False.
+        if target.role == "boss_admin" and target.is_active:
+            active_boss_count = sum(
+                user.role == "boss_admin" and user.is_active
+                for user in self.user_repository.get_all()
+            )
+            if active_boss_count <= 1:
+                raise PermissionError(message)

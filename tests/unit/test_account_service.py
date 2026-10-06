@@ -1,7 +1,7 @@
 # Tests account permissions, input validation, and safe display fields without a database.
 
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 from database.models import User
 from database.user_repository import UserRepository
 from services.account_service import AccountService
@@ -25,6 +25,9 @@ class TestAccountPermissions(unittest.TestCase):
         }
         self.repository = Mock(spec=UserRepository)
         self.repository.get_by_id.side_effect = self.users.get
+        self.repository.lock_accounts.side_effect = lambda *ids: {
+            user_id: self.users[user_id] for user_id in ids if user_id in self.users
+        }
         self.repository.get_all.side_effect = lambda: list(self.users.values())
         self.repository.add.side_effect = lambda user: user
         self.repository.update.side_effect = lambda user: user
@@ -183,6 +186,58 @@ class TestAccountPermissions(unittest.TestCase):
                     self.repository.delete.assert_not_called()
                     self.repository.update.assert_not_called()
 
+    # Tests that removal operations lock before reading roles, counting, or writing.
+    def test_boss_status_lock_precedes_account_reads(self):
+        for action in ("delete", "demote"):
+            with self.subTest(action=action):
+                self.reset_accounts()
+                if action == "delete":
+                    self.service.delete_account(1, 4)
+                else:
+                    self.service.change_role(1, 4, "steam_specialist")
+                self.assertEqual(self.repository.mock_calls[:2], [
+                    call.lock_boss_admin_status(), call.lock_accounts(1, 4),
+                ])
+                self.repository.lock_boss_admin_status.assert_called_once_with()
+
+    # Tests that inability to acquire the common lock prevents all account access/writes.
+    def test_boss_status_lock_failure_stops_operation(self):
+        for action in ("delete", "demote"):
+            with self.subTest(action=action):
+                self.reset_accounts()
+                self.repository.lock_boss_admin_status.side_effect = RuntimeError("lock failed")
+                with self.assertRaisesRegex(RuntimeError, "lock failed"):
+                    if action == "delete":
+                        self.service.delete_account(1, 4)
+                    else:
+                        self.service.change_role(1, 4, "steam_specialist")
+                self.repository.get_by_id.assert_not_called()
+                self.repository.lock_accounts.assert_not_called()
+                self.repository.get_all.assert_not_called()
+                self.repository.delete.assert_not_called()
+                self.repository.update.assert_not_called()
+
+    # Tests that failed row locking prevents authorization, hashing, and all writes.
+    def test_row_lock_failure_stops_all_mutations(self):
+        operations = (
+            lambda: self.service.create_account(1, "New", "new", "long-test-password", "boss_admin"),
+            lambda: self.service.update_account(1, 4, password="long-test-password"),
+            lambda: self.service.delete_account(1, 4),
+            lambda: self.service.change_role(1, 4, "steam_specialist"),
+        )
+        for index, operation in enumerate(operations):
+            with self.subTest(operation=index):
+                self.reset_accounts()
+                self.repository.lock_accounts.side_effect = RuntimeError("row lock failed")
+                with self.assertRaisesRegex(RuntimeError, "row lock failed"):
+                    operation()
+                self.repository.get_by_id.assert_not_called()
+                self.repository.get_all.assert_not_called()
+                self.passwords.hash_password.assert_not_called()
+                self.repository.add.assert_not_called()
+                self.repository.update.assert_not_called()
+                self.repository.delete.assert_not_called()
+
     # Tests that a student promoted after listing cannot be updated or deleted through a stale entry.
     def test_current_target_role_is_checked(self):
         self.service.list_accounts(2)
@@ -203,6 +258,10 @@ class TestAccountValidation(unittest.TestCase):
                            password_hash="original-hash", is_active=True)
         self.repository = Mock(spec=UserRepository)
         self.repository.get_by_id.side_effect = {1: self.actor, 2: self.target}.get
+        self.repository.lock_accounts.side_effect = lambda *ids: {
+            user_id: {1: self.actor, 2: self.target}[user_id]
+            for user_id in ids if user_id in (1, 2)
+        }
         self.repository.add.side_effect = lambda user: user
         self.repository.update.side_effect = lambda user: user
         self.passwords = Mock(spec=PasswordService)

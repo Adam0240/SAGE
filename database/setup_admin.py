@@ -6,7 +6,7 @@ from getpass import getpass
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
-from database.connection import SessionLocal
+from database.connection import DatabaseConfigurationError, SessionLocal
 from database.models import User
 from database.user_repository import UserRepository
 from services.password_service import PasswordService
@@ -21,6 +21,9 @@ def main():
             if repository.get_all():
                 print("Setup cancelled: SAGE accounts already exist.")
                 return
+    except DatabaseConfigurationError as error:
+        print(error)
+        return
     except SQLAlchemyError:
         print(
             "Could not read the users table. "

@@ -40,7 +40,36 @@ class TestAccountDialog(unittest.TestCase):
                          ["boss_admin", "steam_specialist", "base_specialist"])
         student = AccountManagementDialog(2, "base_specialist")
         self.addCleanup(student.close)
-        self.assertFalse(student.create_button.isEnabled())
+        self.assertEqual(student.tabs.count(), 1)
+        self.assertEqual(student.tabs.tabText(0), "My Password")
+        self.assertTrue(student.update_button.isEnabled())
+        self.assertFalse(hasattr(student, "create_button"))
+        self.assertFalse(hasattr(student, "account_input"))
+
+    # Tests assistants validate passwords and submit only their own ID, without account reads.
+    def test_assistant_password_form_validates_and_targets_self(self):
+        self.operation.reset_mock()
+        assistant = AccountManagementDialog(2, "base_specialist")
+        self.addCleanup(assistant.close)
+        self.operation.assert_not_called()
+        for password, confirmation, message in (
+            ("", "", "at least 12 characters"),
+            ("short", "short", "at least 12 characters"),
+            ("long-test-password", "different", "Passwords do not match"),
+        ):
+            with self.subTest(password=password):
+                assistant.edit_password_input.setText(password)
+                assistant.edit_confirm_input.setText(confirmation)
+                assistant.update_button.click()
+                self.assertIn(message, assistant.status_label.text())
+                self.operation.assert_not_called()
+        assistant.create_account()
+        assistant.confirm_delete()
+        self.operation.assert_not_called()
+        assistant.edit_password_input.setText("long-test-password")
+        assistant.edit_confirm_input.setText("long-test-password")
+        assistant.update_button.click()
+        self.operation.assert_called_once_with("update", target_id=2, password="long-test-password")
 
     # Tests the shared self-password form, identity locks, mismatch rejection, and self-deletion block.
     def test_specialist_self_password_form(self):
@@ -129,6 +158,63 @@ class TestAccountThreadLifecycle(unittest.TestCase):
         # Drain queued signals before closing so a failing assertion cannot destroy a running thread.
         self.wait_for_worker(dialog)
         dialog.close()
+
+    # Tests an assistant's threaded password change replaces login credentials without listing users.
+    def test_assistant_password_change_replaces_login_credentials(self):
+        from database.models import User
+        from database.user_repository import UserRepository
+        from services.account_service import AccountService
+        from services.authentication_service import AuthenticationService
+        from services.password_service import PasswordService
+
+        passwords = PasswordService()
+        user = User(id=2, name="Assistant", username="assistant", role="base_specialist",
+                    is_active=True, password_hash=passwords.hash_password("original long password"))
+        repository = Mock(spec=UserRepository)
+        repository.lock_accounts.return_value = {2: user}
+        repository.get_by_username.return_value = user
+        repository.update.side_effect = lambda account: account
+        service = AccountService(repository, passwords)
+        authentication = AuthenticationService(repository, passwords)
+        with patch("sage_apps.account_management_app.list_accounts") as listing, patch(
+            "sage_apps.account_management_app.update_account", side_effect=service.update_account
+        ) as update:
+            dialog = AccountManagementDialog(2, "base_specialist")
+            self.addCleanup(self.close_dialog, dialog)
+            dialog.edit_password_input.setText("replacement long password")
+            dialog.edit_confirm_input.setText("replacement long password")
+            dialog.update_button.click()
+            self.assertFalse(dialog.tabs.isEnabled())
+            self.wait_for_worker(dialog)
+            update.assert_called_once_with(2, target_id=2, password="replacement long password")
+            listing.assert_not_called()
+            repository.get_all.assert_not_called()
+            self.assertTrue(dialog.tabs.isEnabled())
+            self.assertEqual(dialog.status_label.text(), "Account updated.")
+            self.assertEqual(dialog.edit_password_input.text(), "")
+            self.assertEqual(dialog.edit_confirm_input.text(), "")
+            self.assertIsNone(authentication.authenticate("assistant", "original long password"))
+            self.assertIs(authentication.authenticate("assistant", "replacement long password"), user)
+
+    # Tests assistant password-change errors restore controls and permit a successful retry.
+    def test_assistant_password_change_recovers_after_failure(self):
+        with patch("sage_apps.account_management_app.list_accounts") as listing, patch(
+            "sage_apps.account_management_app.update_account", side_effect=PermissionError("Account disabled.")
+        ) as update:
+            dialog = AccountManagementDialog(2, "base_specialist")
+            self.addCleanup(self.close_dialog, dialog)
+            dialog.edit_password_input.setText("long-test-password")
+            dialog.edit_confirm_input.setText("long-test-password")
+            dialog.update_button.click()
+            self.wait_for_worker(dialog)
+            self.assertTrue(dialog.tabs.isEnabled())
+            self.assertEqual(dialog.status_label.text(), "Account disabled.")
+            update.side_effect = None
+            dialog.update_button.click()
+            self.wait_for_worker(dialog)
+            self.assertEqual(dialog.status_label.text(), "Account updated.")
+            self.assertEqual(update.call_count, 2)
+            listing.assert_not_called()
 
     # Tests real QThread signal delivery, successful listing, duplicate-update recovery, and retry success.
     def test_worker_finishes_and_dialog_recovers_after_failure(self):

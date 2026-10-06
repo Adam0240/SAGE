@@ -95,7 +95,10 @@ class AccountManagementDialog(QDialog):
         self.tabs = QTabWidget()
         layout.addWidget(self.tabs)
 
-        self._build_create_tab()
+        if actor_role == "base_specialist":
+            self._build_password_tab()
+        else:
+            self._build_create_tab()
 
         if actor_role in ("boss_admin", "steam_specialist"):
             self._build_manage_tab()
@@ -189,13 +192,38 @@ class AccountManagementDialog(QDialog):
                 self.role_input.findData("base_specialist")
             )
 
-        if self.actor_role == "base_specialist":
-            self.create_button.setEnabled(False)
-            layout.addWidget(QLabel(
-                "Work_Study Assistants cannot create accounts."
-            ))
-
         self.tabs.addTab(create_tab, "Create Account")
+
+    def _build_password_tab(self):
+        password_tab = QWidget()
+        layout = QVBoxLayout(password_tab)
+        layout.addWidget(QLabel("Choose a new password with at least 12 characters."))
+        form = QFormLayout()
+        self.edit_password_input = QLineEdit()
+        self.edit_password_input.setEchoMode(QLineEdit.EchoMode.Password)
+        form.addRow("New password:", self.edit_password_input)
+        self.edit_confirm_input = QLineEdit()
+        self.edit_confirm_input.setEchoMode(QLineEdit.EchoMode.Password)
+        form.addRow("Confirm password:", self.edit_confirm_input)
+        layout.addLayout(form)
+        self.update_button = QPushButton("Change Password")
+        self.update_button.clicked.connect(self.change_own_password)
+        layout.addWidget(self.update_button)
+        self.tabs.addTab(password_tab, "My Password")
+
+    def change_own_password(self):
+        if self._thread is not None:
+            return
+        password = self.edit_password_input.text()
+        if password != self.edit_confirm_input.text():
+            self.status_label.setText("Passwords do not match.")
+            return
+        if len(password) < 12:
+            self.status_label.setText("Password must contain at least 12 characters.")
+            return
+        self.status_label.clear()
+        # Self-service never reads other accounts or accepts a selected target ID.
+        self._start_operation("update", target_id=self.actor_id, password=password)
 
     def _build_manage_tab(self):
         manage_tab = QWidget()
@@ -382,7 +410,7 @@ class AccountManagementDialog(QDialog):
             self._start_operation("list")
 
     def create_account(self):
-        if self._thread is not None:
+        if self._thread is not None or self.actor_role not in ("boss_admin", "steam_specialist"):
             return
 
         if self.password_input.text() != self.confirm_input.text():
@@ -399,6 +427,9 @@ class AccountManagementDialog(QDialog):
         )
 
     def save_changes(self):
+        if self.actor_role == "base_specialist":
+            self.change_own_password()
+            return
         account = self._selected_account()
 
         if account is None or self._thread is not None:
@@ -427,6 +458,8 @@ class AccountManagementDialog(QDialog):
         )
 
     def confirm_delete(self):
+        if self.actor_role == "base_specialist":
+            return
         account = self._selected_account()
 
         if (
