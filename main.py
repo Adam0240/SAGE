@@ -1,9 +1,8 @@
 # SAGE Main UI
 
 import sys
+
 from PySide6.QtCore import Qt
-from login_dialog import LoginDialog
-from services.session_service import SessionService
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
@@ -12,6 +11,10 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from login_dialog import LoginDialog
+from sage_apps.account_management_app import AccountManagementDialog
+from services.session_service import SessionService
 
 
 class SageWindow(QWidget):
@@ -69,7 +72,7 @@ class SageWindow(QWidget):
         # Leave flexible space between the title and the avatar.
         main_layout.addStretch(2)
 
-         # Use three dots as a placeholder for the AI avatar.
+        # Use three dots as a placeholder for the AI avatar.
         self.avatar = QLabel("●   ●   ●")
         self.avatar.setFixedSize(200, 200)
         self.avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -121,6 +124,12 @@ class SageWindow(QWidget):
             self.app_buttons.append(button)
             app_layout.addWidget(button)
 
+        # The first circle opens account management after staff login.
+        self.app_buttons[0].setAccessibleName("Account Management")
+        self.app_buttons[0].setToolTip("Account Management")
+        self.app_buttons[0].clicked.connect(self.open_account_management)
+        self.app_buttons[0].setEnabled(False)
+
         app_layout.addStretch()
         main_layout.addLayout(app_layout)
 
@@ -132,6 +141,7 @@ class SageWindow(QWidget):
         if self.session_state.user_id is not None:
             self.session_state = self.session_service.log_out()
             self.mode_button.setText(self.session_state.button_label)
+            self.app_buttons[0].setEnabled(False)
             return
 
         # Student Mode opens the administrator login dialog.
@@ -144,7 +154,20 @@ class SageWindow(QWidget):
                 role=dialog.user_role,
             )
             self.mode_button.setText(self.session_state.button_label)
-    
+            self.app_buttons[0].setEnabled(True)
+
+    def open_account_management(self):
+        # Account management is available only during a staff session.
+        if self.session_state.user_id is None:
+            return
+
+        dialog = AccountManagementDialog(
+            actor_id=self.session_state.user_id,
+            actor_role=self.session_state.mode,
+            parent=self,
+        )
+        dialog.exec()
+
     def keyPressEvent(self, event):
         # End the application when the Escape key is pressed.
         if event.key() == Qt.Key.Key_Escape:
@@ -155,7 +178,7 @@ class SageWindow(QWidget):
 
 
 if __name__ == "__main__":
-    # Start the Qt application
+    # Start the Qt application.
     app = QApplication(sys.argv)
 
     # Create the SAGE window and display it.

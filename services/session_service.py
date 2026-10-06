@@ -6,7 +6,7 @@ from dataclasses import dataclass
 ROLE_LABELS = {
     "boss_admin": "Boss Admin",
     "steam_specialist": "STEAM Specialist",
-    "base_specialist": "Base Specialist",
+    "base_specialist": "Work_Study Assistant",
 }
 
 
