@@ -1,8 +1,8 @@
 # SAGE tests
 
 The suite focuses on user login/logout, account CRUD, role permissions, password changes,
-and default UI behavior. Related input and role cases use subtests with descriptive case
-labels. Database CRUD is checked through the account-operation wrappers instead of
+G-code browsing and previews, and default UI behavior. Related input and role cases use
+subtests with descriptive case labels. Database CRUD is checked through the account-operation wrappers instead of
 repeating the same operations in a separate repository test suite.
 
 Each test has a comment immediately above it describing the behavior it checks.
@@ -14,7 +14,13 @@ The test files are grouped by feature:
 - `unit/test_password_service.py`: hashing, verification, and password changes.
 - `unit/test_database_configuration.py`: required settings, environment overrides,
   host/port validation, safe errors, and lazy initialization recovery.
-- `ui/test_main_window.py`: default UI, login/logout, and account access.
+- `ui/test_main_window.py`: default UI, login/logout, account access, and G-code/Home navigation.
+- `ui/test_gcodedisplayapp.py`: G-code discovery, button/keyboard navigation,
+  file-list search/selection/cancellation, preview messages/scaling, and configurable folder paths.
+- `unit/test_gcode_parser.py`: supported movement commands, coordinate formats,
+  comments, omitted axes, and file read errors without Qt.
+- `ui/test_gcode_preview_service.py`: image rendering, thumbnail caching/invalidation,
+  and defined file/movement errors using Qt images without interface widgets.
 - `ui/test_account_dialog.py`: account forms, confirmation, assistant self-service
   password changes, and worker recovery.
 - `ui/test_login_dialog.py`: real login threads, safe errors, retry, missing results,

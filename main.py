@@ -1,8 +1,10 @@
 # SAGE Main UI
 
 import sys
+from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QSize
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
@@ -14,6 +16,7 @@ from PySide6.QtWidgets import (
 
 from login_dialog import LoginDialog
 from sage_apps.account_management_app import AccountManagementDialog
+from sage_apps.gcode_display_print_app import GcodeDisplayPrintApp
 from services.session_service import SessionService
 
 
@@ -25,6 +28,7 @@ class SageWindow(QWidget):
         # Initialize the application in Student Mode.
         self.session_service = SessionService()
         self.session_state = self.session_service.start()
+        self.gcode_window = None
 
         # Set the window title, starting size, and background color.
         self.setWindowTitle("SAGE")
@@ -124,11 +128,29 @@ class SageWindow(QWidget):
             self.app_buttons.append(button)
             app_layout.addWidget(button)
 
-        # The first circle opens account management after staff login.
+        # Replace the first two blue circles with the application images.
+        icon_dir = Path(__file__).resolve().parent / "resources" / "app_icons"
+        for button, filename in zip(
+            self.app_buttons, ("useradmin_appicon.png", "gcode_appicon.png")
+        ):
+            button.setIcon(QIcon(str(icon_dir / filename)))
+            button.setIconSize(QSize(110, 110))
+            button.setStyleSheet(
+                button.styleSheet().replace(
+                    "background-color: blue;", "background-color: transparent;"
+                )
+            )
+
+        # The first button opens account management after staff login.
         self.app_buttons[0].setAccessibleName("Account Management")
         self.app_buttons[0].setToolTip("Account Management")
         self.app_buttons[0].clicked.connect(self.open_account_management)
         self.app_buttons[0].setEnabled(False)
+
+        # The second button opens the G-code viewer in Student Mode or a staff session.
+        self.app_buttons[1].setAccessibleName("3D Printing")
+        self.app_buttons[1].setToolTip("3D Printing")
+        self.app_buttons[1].clicked.connect(self.open_gcode_app)
 
         app_layout.addStretch()
         main_layout.addLayout(app_layout)
@@ -167,6 +189,29 @@ class SageWindow(QWidget):
             parent=self,
         )
         dialog.exec()
+
+    # Reuse the viewer so returning home does not discard the selected file.
+    def open_gcode_app(self):
+        if self.gcode_window is None:
+            self.gcode_window = GcodeDisplayPrintApp(parent=self)
+            self.gcode_window.setWindowFlag(Qt.WindowType.Window, True)
+            self.gcode_window.home_requested.connect(self.show_home)
+        self.gcode_window.show()
+        self.gcode_window.raise_()
+        self.gcode_window.activateWindow()
+        self.hide()
+
+    # Restore the existing home window and its current login session.
+    def show_home(self):
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    # Closing SAGE also hides its owned viewer without requesting another return home.
+    def closeEvent(self, event):
+        if self.gcode_window is not None:
+            self.gcode_window.hide()
+        super().closeEvent(event)
 
     def keyPressEvent(self, event):
         # End the application when the Escape key is pressed.

@@ -26,8 +26,10 @@ Student Mode can open without database credentials or a running database:
 
 The window starts in Student Mode with a title, avatar placeholder, and application
 buttons. Staff login enables account management, including a My Password form for
-Work Study Assistants; the other two application buttons
-are currently placeholders. Close the window or press Escape to exit.
+Work Study Assistants. The second application button opens the G-code viewer;
+its Home button returns to the existing SAGE screen and preserves the current session
+and file selection. The third application button is currently a placeholder.
+Close the home window or press Escape on the home screen to exit.
 
 ## Set up staff login
 

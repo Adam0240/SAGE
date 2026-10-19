@@ -1,14 +1,22 @@
 # Provides the base widget used to build the G-code display and printing app.
-from PySide6.QtCore import Qt, QPointF
+from PySide6.QtCore import Qt, Signal
 from pathlib import Path
 from PySide6.QtWidgets import (
-    QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout
+    QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
+    QDialog, QDialogButtonBox, QListWidget, QLineEdit
 )
 from PySide6.QtGui import (
-    QKeySequence, QShortcut, QImage, QPainter, QPen, QColor, QPixmap
+    QKeySequence, QShortcut, QPixmap
 )
-import re
-import hashlib
+
+# Keep direct script launches able to import the shared services package.
+if __name__ == "__main__" and __package__ is None:
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from services.gcode_preview_service import (
+    GcodePreviewService, NoPreviewableMovementError, UnreadableGcodeError,
+)
 
 # Folder containing the G-code files available for printing.
 GCODE_DIR = Path(
@@ -18,9 +26,16 @@ THUMB_DIR = Path(__file__).resolve().parent / "thumbnails"
 
 # Creates the screen where users will browse G-code files and start prints.
 class GcodeDisplayPrintApp(QWidget):
-    def __init__(self, parent=None):
+    home_requested = Signal()
+
+    def __init__(self, parent=None, *, gcode_dir=None, thumbnail_dir=None):
         # Set up the QWidget and connect it to a parent widget if one is provided.
         super().__init__(parent)
+
+        # Use installation defaults unless the caller supplies different folders.
+        self.gcode_dir = Path(gcode_dir) if gcode_dir is not None else GCODE_DIR
+        cache_dir = thumbnail_dir if thumbnail_dir is not None else THUMB_DIR
+        self.preview_service = GcodePreviewService(cache_dir)
 
         # Set the title shown when the app is opened as a separate window.
         self.setWindowTitle("SAGE - 3D Printing")
@@ -43,6 +58,7 @@ class GcodeDisplayPrintApp(QWidget):
 
         # Create the button that will return to the main SAGE screen.
         self.home_button = QPushButton("Home")
+        self.home_button.clicked.connect(self.close)
         self.home_button.setFixedSize(80, 80)
         self.home_button.setStyleSheet(
             "color: white;"
@@ -72,7 +88,6 @@ class GcodeDisplayPrintApp(QWidget):
         self.main_layout.addLayout(self.header_layout)
 
         # Reserve an area for the G-code preview.
-        # This text will be replaced with an image when preview loading is added.
         self.preview_label = QLabel("G-code Preview")
         self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.preview_label.setMinimumSize(400, 300)
@@ -93,7 +108,7 @@ class GcodeDisplayPrintApp(QWidget):
         self.previous_button = QPushButton("<")
         self.previous_button.setFixedSize(60, 50)
 
-        # Show a placeholder until we connect the G-code folder.
+        # Show a placeholder until the G-code files have been loaded.
         # Allow long filenames to wrap so they fit between the buttons.
         self.filename_label = QLabel("No file selected")
         self.filename_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -176,12 +191,14 @@ class GcodeDisplayPrintApp(QWidget):
         # Move backward or forward through the files when an arrow is clicked.
         self.previous_button.clicked.connect(self.show_previous_file)
         self.next_button.clicked.connect(self.show_next_file)
+        self.file_list_button.clicked.connect(self.show_file_list)
+        self.file_list_button.setEnabled(bool(self.gcode_files))
 
         # Navigation is only needed when more than one file is available.
         self.previous_button.setEnabled(len(self.gcode_files) > 1)
         self.next_button.setEnabled(len(self.gcode_files) > 1)
 
-                # Use the left arrow key to select the previous file.
+        # Use the left arrow key to select the previous file.
         self.previous_shortcut = QShortcut(
             QKeySequence(Qt.Key.Key_Left), self
         )
@@ -203,11 +220,16 @@ class GcodeDisplayPrintApp(QWidget):
         self.previous_shortcut.setEnabled(len(self.gcode_files) > 1)
         self.next_shortcut.setEnabled(len(self.gcode_files) > 1)
 
-        # Find the G-code files and show the first filename in the interface.
+    # Return to the owning home screen before this window closes.
+    def closeEvent(self, event):
+        self.home_requested.emit()
+        super().closeEvent(event)
+
+    # Find the G-code files and show the first filename in the interface.
     def load_gcode_files(self):
         try:
             # Check that the configured path points to an existing folder.
-            if not GCODE_DIR.is_dir():
+            if not self.gcode_dir.is_dir():
                 self.filename_label.setText("G-code folder not found")
                 self.preview_label.setText("Check the G-code folder path.")
                 return
@@ -216,7 +238,7 @@ class GcodeDisplayPrintApp(QWidget):
             # Converting the extension to lowercase also includes .GCODE files.
             self.gcode_files = sorted(
                 (
-                    path for path in GCODE_DIR.iterdir()
+                    path for path in self.gcode_dir.iterdir()
                     if path.is_file() and path.suffix.lower() == ".gcode"
                 ),
                 key=lambda path: path.name.lower()
@@ -239,7 +261,80 @@ class GcodeDisplayPrintApp(QWidget):
         # Use the same display update for startup and arrow navigation.
         self.update_selected_file()
 
-        # Display the previous file, wrapping to the last file from the first.
+    # Select a file from the same ordered list used by the navigation arrows.
+    def show_file_list(self):
+        if not self.gcode_files:
+            return
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Select G-code File")
+        dialog.resize(600, 400)
+        dialog.setStyleSheet(
+            "QDialog { background-color: black; }"
+            "QLineEdit { color: white; font-size: 18px; padding: 8px;"
+            " border: 1px solid white; selection-background-color: #245a81; }"
+            "QLabel { color: white; font-size: 18px; }"
+            "QListWidget { color: white; font-size: 18px; border: 1px solid white; }"
+            "QListWidget::item { padding: 8px; }"
+            "QListWidget::item:selected { background-color: #245a81; color: white; }"
+            "QPushButton { color: white; font-size: 18px; padding: 8px 20px;"
+            " border: 1px solid white; border-radius: 6px; }"
+        )
+        layout = QVBoxLayout(dialog)
+        search_box = QLineEdit()
+        search_box.setPlaceholderText("Search G-code filenames...")
+        search_box.setAccessibleName("Search G-code filenames")
+        search_box.setClearButtonEnabled(True)
+        layout.addWidget(search_box)
+
+        file_list = QListWidget()
+        file_list.addItems([path.name for path in self.gcode_files])
+        file_list.setCurrentRow(self.current_file_index)
+        file_list.scrollToItem(file_list.currentItem())
+        layout.addWidget(file_list)
+        no_matches_label = QLabel("No matching G-code files.")
+        no_matches_label.setObjectName("no_matches_label")
+        no_matches_label.hide()
+        layout.addWidget(no_matches_label)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Open | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        file_list.itemActivated.connect(dialog.accept)
+        layout.addWidget(buttons)
+
+        # Hide unmatched items so list rows still map to the original file indices.
+        def filter_files(text):
+            query = text.strip().casefold()
+            first_match = -1
+            for row in range(file_list.count()):
+                item = file_list.item(row)
+                matches = query in item.text().casefold()
+                item.setHidden(not matches)
+                if matches and first_match == -1:
+                    first_match = row
+            current = file_list.currentItem()
+            if current is None or current.isHidden():
+                file_list.setCurrentRow(first_match)
+            no_matches_label.setVisible(first_match == -1)
+            buttons.button(QDialogButtonBox.StandardButton.Open).setEnabled(first_match != -1)
+
+        search_box.textChanged.connect(filter_files)
+        search_box.setFocus()
+
+        # Leave the current preview untouched until the user confirms a selection.
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            selected_index = file_list.currentRow()
+            selected_item = file_list.currentItem()
+            if (0 <= selected_index < len(self.gcode_files)
+                    and selected_item is not None and not selected_item.isHidden()):
+                self.current_file_index = selected_index
+                self.update_selected_file()
+        dialog.deleteLater()
+
+    # Display the previous file, wrapping to the last file from the first.
     def show_previous_file(self):
         # Avoid changing the selection when no files are available.
         if not self.gcode_files:
@@ -270,146 +365,17 @@ class GcodeDisplayPrintApp(QWidget):
         self.filename_label.setText(selected_file.name)
         self.display_gcode_preview(selected_file)
 
-    # Read the X/Y movement positions used to draw an overhead preview.
-    def read_gcode_coordinates(self, file_path):
-        coordinates = []
-        x = y = 0.0
-
-        # Match G0/G1 movement commands, including G00/G01.
-        # Check the command boundary so commands such as G10 are excluded.
-        movement_pattern = re.compile(r"^G0?[01](?=\s|[XYZEF]|$)")
-
-        # Match X/Y values, including negative numbers and decimal values.
-        coordinate_pattern = re.compile(
-            r"([XY])\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+))"
-        )
-
-        # Read one line at a time instead of loading the entire file into memory.
-        with file_path.open(encoding="utf-8-sig") as gcode_file:
-            for line in gcode_file:
-                # Remove semicolon comments and allow lowercase or indented commands.
-                command = line.split(";", 1)[0].strip().upper()
-
-                # Ignore commands that do not describe straight-line movement.
-                if not movement_pattern.match(command):
-                    continue
-
-                values = coordinate_pattern.findall(command)
-
-                # Skip movements that do not change either X or Y.
-                if not values:
-                    continue
-
-                # Keep the previous position for any axis omitted from the command.
-                for axis, value in values:
-                    if axis == "X":
-                        x = float(value)
-                    else:
-                        y = float(value)
-
-                coordinates.append((x, y))
-
-        return coordinates
-
-        # Draw the selected file's movement path as an overhead preview.
-        # Load a saved preview or generate one for the selected G-code file.
+    # Translate preview outcomes into the image or message shown to the user.
     def display_gcode_preview(self, file_path):
-        # Remove the previous image before displaying another file.
         self.preview_label.clear()
-        preview_path = None
-
         try:
-            # Identify this version of the file using its path, modification
-            # time, and size. Changed details produce a different PNG filename.
-            file_details = file_path.stat()
-            preview_key = (
-                f"{file_path.resolve()}|"
-                f"{file_details.st_mtime_ns}|"
-                f"{file_details.st_size}"
-            )
-            preview_id = hashlib.sha256(
-                preview_key.encode("utf-8")
-            ).hexdigest()[:16]
-
-            # Create the preview folder if it does not already exist.
-            THUMB_DIR.mkdir(parents=True, exist_ok=True)
-            preview_path = THUMB_DIR / (
-                f"{file_path.stem}_{preview_id}.png"
-            )
-
-        except OSError:
-            # Still allow previews to display if the cache cannot be accessed.
-            preview_path = None
-
-        # Try loading the saved image before reading and drawing the G-code.
-        image = QImage()
-        if preview_path is not None and image.load(str(preview_path)):
-            self.show_preview_image(image)
-            return
-
-        try:
-            coordinates = self.read_gcode_coordinates(file_path)
-        except (OSError, UnicodeError, ValueError):
-            # Keep the app running if the selected file cannot be read.
+            image = self.preview_service.get_preview(file_path)
+        except UnreadableGcodeError:
             self.preview_label.setText("Unable to read this G-code file.")
-            return
-
-        # At least two positions are needed to draw a movement line.
-        if len(coordinates) < 2:
+        except NoPreviewableMovementError:
             self.preview_label.setText("No previewable movement found.")
-            return
-
-        # Create a black image to draw the movement path onto.
-        width, height = 800, 600
-        image = QImage(width, height, QImage.Format.Format_RGB32)
-        image.fill(QColor("black"))
-
-        # Find the outer edges of the movement path.
-        xs, ys = zip(*coordinates)
-        min_x, max_x = min(xs), max(xs)
-        min_y, max_y = min(ys), max(ys)
-
-        # Avoid division by zero when the path has no width or height.
-        path_width = max_x - min_x or 1.0
-        path_height = max_y - min_y or 1.0
-
-        # Fit the path inside the image while preserving its proportions.
-        margin = 20
-        scale = min(
-            (width - margin * 2) / path_width,
-            (height - margin * 2) / path_height
-        )
-
-        # Center the path within the image.
-        offset_x = (width - (max_x - min_x) * scale) / 2
-        offset_y = (height - (max_y - min_y) * scale) / 2
-
-        # Convert printer coordinates into image positions.
-        # Reverse Y because image coordinates increase downward.
-        points = [
-            QPointF(
-                offset_x + (x - min_x) * scale,
-                height - (offset_y + (y - min_y) * scale)
-            )
-            for x, y in coordinates
-        ]
-
-        # Connect each position to the next with a light-gray line.
-        painter = QPainter(image)
-        painter.setPen(QPen(QColor("lightgray"), 1))
-        try:
-            for start, end in zip(points, points[1:]):
-                painter.drawLine(start, end)
-        finally:
-            # Finish drawing before converting the image for display.
-            painter.end()
-
-        # Save the full-size image for future selections and app launches.
-        # A failed save does not prevent the current preview from displaying.
-        if preview_path is not None:
-            image.save(str(preview_path), "PNG")
-
-        self.show_preview_image(image)
+        else:
+            self.show_preview_image(image)
 
     # Fit either a saved or newly generated image into the preview area.
     def show_preview_image(self, image):
