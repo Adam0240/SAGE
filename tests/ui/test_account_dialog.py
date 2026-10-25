@@ -47,7 +47,7 @@ class TestAccountDialog(unittest.TestCase):
         self.assertFalse(hasattr(student, "account_input"))
 
     # Tests assistants validate passwords and submit only their own ID, without account reads.
-    def test_assistant_password_form_validates_and_targets_self(self):
+    def test_assistant_password_form(self):
         self.operation.reset_mock()
         assistant = AccountManagementDialog(2, "base_specialist")
         self.addCleanup(assistant.close)
@@ -160,7 +160,7 @@ class TestAccountThreadLifecycle(unittest.TestCase):
         dialog.close()
 
     # Tests an assistant's threaded password change replaces login credentials without listing users.
-    def test_assistant_password_change_replaces_login_credentials(self):
+    def test_assistant_new_credentials(self):
         from database.models import User
         from database.user_repository import UserRepository
         from services.account_service import AccountService
@@ -197,7 +197,7 @@ class TestAccountThreadLifecycle(unittest.TestCase):
             self.assertIs(authentication.authenticate("assistant", "replacement long password"), user)
 
     # Tests assistant password-change errors restore controls and permit a successful retry.
-    def test_assistant_password_change_recovers_after_failure(self):
+    def test_assistant_password_retry(self):
         with patch("sage_apps.account_management_app.list_accounts") as listing, patch(
             "sage_apps.account_management_app.update_account", side_effect=PermissionError("Account disabled.")
         ) as update:
@@ -217,7 +217,7 @@ class TestAccountThreadLifecycle(unittest.TestCase):
             listing.assert_not_called()
 
     # Tests real QThread signal delivery, successful listing, duplicate-update recovery, and retry success.
-    def test_worker_finishes_and_dialog_recovers_after_failure(self):
+    def test_worker_failure_recovery(self):
         accounts = [(1, "Specialist", "specialist", "steam_specialist", True),
                     (2, "Student", "student", "base_specialist", True)]
         with patch("sage_apps.account_management_app.list_accounts", return_value=accounts), patch(

@@ -22,7 +22,7 @@ class TestDatabaseConfiguration(unittest.TestCase):
         self.file_settings.side_effect = lambda *_args: self.values.copy()
 
     # Tests every missing/blank required key produces actionable errors without secret values.
-    def test_required_settings_are_validated_without_exposing_values(self):
+    def test_safe_validation_errors(self):
         for key in ("POSTGRES_DB", "POSTGRES_USER", "POSTGRES_PASSWORD"):
             for invalid in (None, "", "   "):
                 with self.subTest(key=key, invalid=invalid):
@@ -39,7 +39,7 @@ class TestDatabaseConfiguration(unittest.TestCase):
                     }[key]
 
     # Tests environment-only configuration overrides all file settings and preserves passwords.
-    def test_environment_overrides_file_and_supports_no_file(self):
+    def test_environment_settings(self):
         overrides = dict(POSTGRES_DB="other_db", POSTGRES_USER="other_user",
                          POSTGRES_PASSWORD=" p@ss:/?# word ",
                          POSTGRES_HOST="remote.example.org", POSTGRES_PORT="6543")
@@ -78,7 +78,7 @@ class TestDatabaseConfiguration(unittest.TestCase):
                     get_database_url()
 
     # Tests failed validation creates no engine and later workers share successful initialization.
-    def test_initialization_recovers_and_workers_share_one_engine(self):
+    def test_shared_engine_recovery(self):
         valid_values = self.values.copy()
         self.values = {}
         with patch.object(connection, "_engine", None), patch("database.connection.create_engine") as create:

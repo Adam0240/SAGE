@@ -7,9 +7,9 @@ import sys
 import unittest
 
 
-class TestUnconfiguredStartup(unittest.TestCase):
+class TestStudentModeStartup(unittest.TestCase):
     # Tests no credentials are read on startup and missing settings recover on a real login thread.
-    def test_student_mode_opens_without_database_configuration(self):
+    def test_without_database_config(self):
         script = """
 import time
 from unittest.mock import patch

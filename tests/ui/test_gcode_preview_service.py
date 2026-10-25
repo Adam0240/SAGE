@@ -53,7 +53,7 @@ class TestGcodePreviewService(unittest.TestCase):
         self.assertFalse(image.isNull())
 
     # Tests changed content and same-named files in different folders receive separate cache entries.
-    def test_cache_distinguishes_changed_files_and_paths(self):
+    def test_cache_content_and_path_changes(self):
         file_path = self.write_gcode()
         image = self.service.get_preview(file_path)
         file_path.write_text("G1 X0 Y0\nG1 X100 Y200\nG1 X200 Y300\n", encoding="utf-8")
@@ -116,7 +116,7 @@ class TestGcodePreviewService(unittest.TestCase):
         self.assertEqual(len(list(self.thumb_dir.glob("*.png"))), 2)
 
     # Tests file access, decoding, and parsing failures become the defined unreadable-file error.
-    def test_read_errors_have_defined_outcome(self):
+    def test_unreadable_gcode_error(self):
         file_path = self.write_gcode()
         for error in (OSError("Access denied"), UnicodeError("Invalid text"), ValueError("Invalid value")):
             with self.subTest(error=type(error).__name__), \
@@ -126,7 +126,7 @@ class TestGcodePreviewService(unittest.TestCase):
                 self.assertIs(caught.exception.__cause__, error)
 
     # Tests fewer than two supported positions produce the defined no-movement error without caching.
-    def test_insufficient_movement_has_defined_outcome(self):
+    def test_no_movement_error(self):
         for content in ("", "; Comments only\nM104 S200\n", "G1 X10 Y20\n"):
             with self.subTest(content=content):
                 file_path = self.write_gcode(content=content)

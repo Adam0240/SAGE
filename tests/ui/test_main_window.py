@@ -17,7 +17,7 @@ class TestStartup(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     # Tests opening/closing SAGE, anonymous Student Mode, and default application-button availability.
-    def test_default_window_behavior(self):
+    def test_student_mode_defaults(self):
         window = SageWindow()
         self.addCleanup(window.close)
         window.show()
@@ -68,7 +68,7 @@ class TestGcodeNavigation(unittest.TestCase):
         self.app.processEvents()
 
     # Tests Student Mode can open the viewer and Home restores the same SAGE window and selection.
-    def test_home_round_trip_preserves_viewer_selection(self):
+    def test_home_preserves_selection(self):
         self.assertIsNone(self.window.gcode_window)
         self.window.app_buttons[1].click()
         viewer = self.window.gcode_window
@@ -145,7 +145,7 @@ class TestLoginWorkflow(unittest.TestCase):
                 self.window.mode_button.click()
 
     # Tests that cancelling login preserves anonymous Student Mode and disabled account access.
-    def test_cancelled_login_stays_in_student_mode(self):
+    def test_cancel_keeps_student_mode(self):
         with patch("main.LoginDialog", autospec=True) as dialog_class:
             dialog_class.DialogCode.Accepted = QDialog.DialogCode.Accepted
             dialog_class.return_value.exec.return_value = QDialog.DialogCode.Rejected
@@ -171,13 +171,13 @@ class TestLoginWorkflow(unittest.TestCase):
                 self.assertFalse(self.window.app_buttons[0].isEnabled())
 
     # Tests that anonymous callers cannot open the account dialog even by calling its handler directly.
-    def test_student_mode_cannot_open_account_management(self):
+    def test_student_account_access_denied(self):
         with patch("main.AccountManagementDialog", autospec=True) as dialog_class:
             self.window.open_account_management()
             dialog_class.assert_not_called()
 
     # Tests that account management receives the authenticated ID and role for all staff roles.
-    def test_account_dialog_receives_authenticated_identity(self):
+    def test_account_dialog_identity(self):
         for role, _label in ROLES:
             with self.subTest(role=role):
                 self.log_in(role)

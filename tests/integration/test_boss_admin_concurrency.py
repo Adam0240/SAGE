@@ -136,7 +136,7 @@ class TestBossAdminConcurrency(unittest.TestCase):
             return [(user.id, user.role) for user in accounts]
 
     # Tests that two self-demotions overlap and the second cannot remove the final boss.
-    def test_concurrent_self_demotions_preserve_one_boss(self):
+    def test_self_demotion_race(self):
         accounts = self.run_overlapping_operations(
             lambda: account_operations.change_role(self.first_id, self.first_id, "steam_specialist"),
             lambda: account_operations.change_role(self.second_id, self.second_id, "steam_specialist"),
@@ -145,7 +145,7 @@ class TestBossAdminConcurrency(unittest.TestCase):
                                     (self.second_id, "boss_admin")])
 
     # Tests that competing self-deletions cannot both commit and the rejected row remains.
-    def test_concurrent_self_deletions_preserve_one_boss(self):
+    def test_self_deletion_race(self):
         accounts = self.run_overlapping_operations(
             lambda: account_operations.delete_account(self.first_id, self.first_id),
             lambda: account_operations.delete_account(self.second_id, self.second_id),
@@ -153,7 +153,7 @@ class TestBossAdminConcurrency(unittest.TestCase):
         self.assertEqual(accounts, [(self.second_id, "boss_admin")])
 
     # Tests that deletion and demotion share one lock rather than separate operation locks.
-    def test_demotion_competing_with_deletion_preserves_one_boss(self):
+    def test_demotion_deletion_race(self):
         accounts = self.run_overlapping_operations(
             lambda: account_operations.change_role(self.first_id, self.first_id, "steam_specialist"),
             lambda: account_operations.delete_account(self.second_id, self.second_id),
@@ -181,7 +181,7 @@ class TestBossAdminConcurrency(unittest.TestCase):
             self.specialist_id, self.assistant_id = specialist.id, assistant.id
 
     # Tests a reset waits for promotion, refreshes cached roles, and cannot reset a new boss.
-    def test_promotion_blocks_and_rejects_specialist_password_reset(self):
+    def test_promotion_prevents_reset(self):
         self.add_specialist_and_assistant()
         self.run_overlapping_operations(
             lambda: account_operations.change_role(self.first_id, self.assistant_id, "boss_admin"),
@@ -210,7 +210,7 @@ class TestBossAdminConcurrency(unittest.TestCase):
                 assistant.password_hash, "replacement long password"))
 
     # Tests creation rechecks its locked actor when a competing transaction revokes its role.
-    def test_actor_demotion_blocks_and_rejects_account_creation(self):
+    def test_actor_demotion_prevents_creation(self):
         self.add_specialist_and_assistant()
         self.run_overlapping_operations(
             lambda: account_operations.change_role(self.first_id, self.specialist_id, "base_specialist"),
@@ -223,7 +223,7 @@ class TestBossAdminConcurrency(unittest.TestCase):
             self.assertEqual(session.get(User, self.specialist_id).role, "base_specialist")
 
     # Tests password updates recheck a demoted actor rather than using its cached permission.
-    def test_actor_demotion_blocks_and_rejects_password_reset(self):
+    def test_actor_demotion_prevents_reset(self):
         self.add_specialist_and_assistant()
         self.run_overlapping_operations(
             lambda: account_operations.change_role(self.first_id, self.specialist_id, "base_specialist"),
@@ -236,7 +236,7 @@ class TestBossAdminConcurrency(unittest.TestCase):
                              self.original_password_hash)
 
     # Tests reversed actor/target pairs overlap between row acquisitions without deadlocking.
-    def test_opposing_updates_lock_rows_in_consistent_order(self):
+    def test_opposing_update_lock_order(self):
         self.run_overlapping_operations(
             lambda: account_operations.update_account(self.second_id, self.first_id, name="First updated"),
             lambda: account_operations.update_account(self.first_id, self.second_id, name="Second updated"),

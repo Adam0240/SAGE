@@ -109,7 +109,7 @@ class TestAccountTransactions(unittest.TestCase):
             self.assertEqual(session.get(User, self.student_id).name, "Retry Worked")
 
     # Tests that failed duplicate creation leaves existing rows intact and the next creation can commit.
-    def test_duplicate_create_rolls_back_and_allows_retry(self):
+    def test_duplicate_create_retry(self):
         with self.assertRaises(IntegrityError):
             account_operations.create_account(self.boss_id, "Duplicate", self.student_username,
                                               "long-test-password", "base_specialist")

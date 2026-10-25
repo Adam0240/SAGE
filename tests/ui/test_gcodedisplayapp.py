@@ -105,7 +105,7 @@ class TestGcodeDisplayApp(unittest.TestCase):
         self.assertFalse(self.window.next_shortcut.isEnabled())
 
     # Tests clicking either arrow wraps selection and refreshes the matching filename and preview.
-    def test_navigation_buttons_wrap_and_update_preview(self):
+    def test_navigation_wraparound(self):
         files = [self.write_gcode(name) for name in ("a.gcode", "b.gcode", "c.gcode")]
         self.load_files()
         with patch.object(self.window, "display_gcode_preview") as preview:
@@ -230,7 +230,7 @@ class TestGcodeDisplayApp(unittest.TestCase):
         self.assertEqual(self.window.filename_label.text(), "c.gcode")
 
     # Tests cancelling or closing the list after changing its highlighted row preserves selection and preview.
-    def test_file_list_cancellation_preserves_selection(self):
+    def test_file_list_cancel_keeps_selection(self):
         self.write_gcode("a.gcode")
         self.write_gcode("b.gcode")
         self.load_files()
@@ -297,7 +297,7 @@ class TestGcodeDisplayApp(unittest.TestCase):
         self.assertTrue(self.window.preview_label.pixmap().isNull())
 
     # Tests typing filters filenames by partial, case-insensitive matches and opens the original file index.
-    def test_file_list_search_selects_matching_file(self):
+    def test_file_list_search_match(self):
         self.write_gcode("a.gcode")
         matching_file = self.write_gcode("Robot_Model.GCODE")
         self.write_gcode("z.gcode")
@@ -347,7 +347,7 @@ class TestGcodeDisplayApp(unittest.TestCase):
         self.assertEqual(self.window.preview_label.pixmap().cacheKey(), original_preview)
 
     # Tests clearing a search restores every file and Open, while cancelling preserves the app selection.
-    def test_file_list_search_clear_and_cancel(self):
+    def test_file_list_search_reset(self):
         self.write_gcode("a.gcode")
         self.write_gcode("robot.gcode")
         self.load_files()

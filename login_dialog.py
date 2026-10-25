@@ -125,6 +125,12 @@ class LoginDialog(QDialog):
         if self._thread is not None:
             return
 
+        username = self.username_input.text()
+        password = self.password_input.text()
+        if not username.strip() or not password:
+            self.error_label.setText("Enter your username and password.")
+            return
+
         self.error_label.setText("")
         self.login_button.setEnabled(False)
         self.login_button.setText("Connecting...")
@@ -132,8 +138,8 @@ class LoginDialog(QDialog):
         self._result = None
         self._thread = QThread(self)
         self._worker = LoginWorker(
-            self.username_input.text(),
-            self.password_input.text(),
+            username,
+            password,
         )
         self._worker.moveToThread(self._thread)
 
@@ -150,9 +156,12 @@ class LoginDialog(QDialog):
 
     @Slot()
     def _finish_attempt(self):
-        # This runs after the worker thread has stopped.
+        # finished can arrive while deferred worker deletion is still running.
+        # Join before releasing Python references to objects being deleted by Qt.
         result = self._result
         thread = self._thread
+        if thread is not None:
+            thread.wait()
         self._thread = None
         self._worker = None
         self._result = None

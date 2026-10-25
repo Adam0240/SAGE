@@ -36,7 +36,7 @@ class TestAccountPermissions(unittest.TestCase):
         self.service = AccountService(self.repository, self.passwords)
 
     # Tests that bosses create any role, specialists create only students, and students create none.
-    def test_create_permissions_by_role(self):
+    def test_create_by_role(self):
         for actor_id, actor_role in enumerate(ROLES, start=1):
             for new_role in ROLES:
                 with self.subTest(actor=actor_role, new_role=new_role):
@@ -56,7 +56,7 @@ class TestAccountPermissions(unittest.TestCase):
                         self.repository.add.assert_not_called()
 
     # Tests that bosses read all users, specialists read self/students, and students cannot list users.
-    def test_read_permissions_by_role(self):
+    def test_read_by_role(self):
         self.users[6].is_active = False
         self.assertEqual(self.service.list_accounts(1), list(self.users.values()))
         self.assertEqual(self.service.list_accounts(2), [self.users[i] for i in (2, 3, 6)])
@@ -64,7 +64,7 @@ class TestAccountPermissions(unittest.TestCase):
             self.service.list_accounts(3)
 
     # Tests update access for every actor/target role, including own passwords and normalized identity.
-    def test_update_permissions_by_role(self):
+    def test_update_by_role(self):
         for actor_id in (1, 2, 3):
             for target_id in range(1, 7):
                 with self.subTest(actor=actor_id, target=target_id):
@@ -93,7 +93,7 @@ class TestAccountPermissions(unittest.TestCase):
                         self.passwords.hash_password.assert_not_called()
 
     # Tests that bosses delete any account, specialists delete only students, and students delete none.
-    def test_delete_permissions_by_role(self):
+    def test_delete_by_role(self):
         for actor_id in (1, 2, 3):
             for target_id in range(1, 7):
                 with self.subTest(actor=actor_id, target=target_id):
@@ -125,7 +125,7 @@ class TestAccountPermissions(unittest.TestCase):
                     self.repository.update.assert_not_called()
 
     # Tests that specialists cannot edit their own name/username even when also changing a password.
-    def test_specialist_own_identity_is_protected(self):
+    def test_specialist_self_protection(self):
         for field in ("name", "username"):
             with self.subTest(field=field):
                 self.reset_accounts()
@@ -201,7 +201,7 @@ class TestAccountPermissions(unittest.TestCase):
                 self.repository.lock_boss_admin_status.assert_called_once_with()
 
     # Tests that inability to acquire the common lock prevents all account access/writes.
-    def test_boss_status_lock_failure_stops_operation(self):
+    def test_boss_lock_failure(self):
         for action in ("delete", "demote"):
             with self.subTest(action=action):
                 self.reset_accounts()
@@ -269,7 +269,7 @@ class TestAccountValidation(unittest.TestCase):
         self.service = AccountService(self.repository, self.passwords)
 
     # Tests that blank/oversized names, invalid usernames, and short passwords prevent creation.
-    def test_invalid_creation_inputs_are_rejected(self):
+    def test_invalid_creation(self):
         cases = (
             {"name": ""}, {"name": "   "}, {"name": "n" * 101},
             {"username": ""}, {"username": "   "}, {"username": "u" * 51},
@@ -287,7 +287,7 @@ class TestAccountValidation(unittest.TestCase):
         self.passwords.hash_password.assert_not_called()
 
     # Tests that creation and updates accept maximum identity lengths and exactly 12 password characters.
-    def test_create_and_update_accept_length_boundaries(self):
+    def test_field_length_limits(self):
         user = self.service.create_account(1, "n" * 100, "u" * 50, "p" * 12, "base_specialist")
         self.assertEqual(user.name, "n" * 100)
         self.assertEqual(user.username, "u" * 50)
@@ -300,7 +300,7 @@ class TestAccountValidation(unittest.TestCase):
         self.repository.update.assert_called_once_with(self.target)
 
     # Tests that invalid updates neither mutate identity/password fields nor write to storage.
-    def test_invalid_updates_leave_account_unchanged(self):
+    def test_invalid_update_preserves_account(self):
         cases = (
             {"name": ""}, {"name": "   "}, {"name": "n" * 101},
             {"username": ""}, {"username": "   "}, {"username": "u" * 51},
@@ -329,7 +329,7 @@ class TestAccountValidation(unittest.TestCase):
 
 class TestAccountListing(unittest.TestCase):
     # Tests that listing delegates the actor ID and returns only ID, name, username, role, and status.
-    def test_listing_returns_display_fields_only(self):
+    def test_display_fields_only(self):
         user = User(id=1, name="Specialist", username="specialist", role="steam_specialist",
                     password_hash="must-not-be-returned", is_active=True)
         service = Mock(spec=AccountService)

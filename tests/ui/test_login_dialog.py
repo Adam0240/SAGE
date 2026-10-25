@@ -67,6 +67,36 @@ class TestLoginThreadLifecycle(unittest.TestCase):
         self.authentication.authenticate.assert_called_once_with("staff", "long test password")
         self.sessions.return_value.__exit__.assert_called_once()
 
+    # Empty credentials must never initialize a database session or start a worker.
+    def test_empty_credentials_skip_database(self):
+        for username, password in (("", ""), ("  ", "secret"), ("staff", "")):
+            with self.subTest(username=username, password=password):
+                self.dialog.username_input.setText(username)
+                self.dialog.password_input.setText(password)
+                self.dialog.login_button.click()
+                self.assertIsNone(self.dialog._thread)
+                self.assertTrue(self.dialog.login_button.isEnabled())
+                self.assertEqual(self.dialog.error_label.text(), "Enter your username and password.")
+        self.sessions.assert_not_called()
+        self.authentication.authenticate.assert_not_called()
+
+    # Exercise fast worker teardown repeatedly through the modal event loop used by SAGE.
+    def test_repeated_modal_login_failures(self):
+        from PySide6.QtCore import QTimer
+
+        self.authentication.authenticate.side_effect = SQLAlchemyError("offline")
+        for _ in range(100):
+            self.dialog.password_input.setText("test password")
+            def submit():
+                self.dialog.attempt_login()
+                self.dialog._thread.finished.connect(self.dialog.reject)
+            QTimer.singleShot(0, submit)
+            self.dialog.exec()
+            self.assertIsNone(self.dialog._thread)
+            self.assertIsNone(self.dialog._worker)
+            self.assertTrue(self.dialog.login_button.isEnabled())
+            self.assertEqual(self.dialog.error_label.text(), "Database unavailable. Try again later.")
+
     # Tests invalid credentials keep the dialog open and permit a subsequent valid login.
     def test_invalid_credentials_allow_retry(self):
         self.dialog.show()
@@ -113,7 +143,7 @@ class TestLoginThreadLifecycle(unittest.TestCase):
                     self.dialog.username_input.setText("staff")
 
     # Tests exactly one completion signal, including failures during session cleanup.
-    def test_worker_emits_one_result_after_session_closes(self):
+    def test_result_after_session_cleanup(self):
         for error in (None, SQLAlchemyError("close failed"), RuntimeError("close failed")):
             with self.subTest(error=type(error).__name__):
                 context = MagicMock()
@@ -148,7 +178,7 @@ class TestLoginThreadLifecycle(unittest.TestCase):
         self.assertEqual(self.dialog.result(), QDialog.DialogCode.Accepted)
 
     # Tests close/Escape and repeated submissions cannot destroy or duplicate a running worker.
-    def test_active_login_blocks_close_and_duplicate_attempts(self):
+    def test_login_blocks_close_and_resubmit(self):
         entered = threading.Event()
         release = threading.Event()
         self.addCleanup(release.set)

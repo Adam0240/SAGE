@@ -58,7 +58,7 @@ class TestPasswordService(unittest.TestCase):
 
 class TestPasswordChange(unittest.TestCase):
     # Tests that a specialist's own password change accepts the new password and rejects the old one.
-    def test_password_change_replaces_login_credentials(self):
+    def test_new_credentials(self):
         passwords = PasswordService()
         old_password, new_password = "Original long password", "Replacement long password"
         user = User(id=1, name="Specialist", username="specialist", role="steam_specialist",
