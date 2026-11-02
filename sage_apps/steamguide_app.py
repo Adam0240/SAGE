@@ -1,0 +1,300 @@
+import sys
+from pathlib import Path
+
+from PySide6.QtCore import Qt, QSize, Signal
+from PySide6.QtWidgets import (
+    QApplication,
+    QDialog,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QScrollArea,
+    QStyle,
+    QTextBrowser,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
+)
+
+
+class SteamGuide_App(QWidget):
+    home_requested = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        self.setWindowTitle("SAGE - STEAM Assistant")
+        self.resize(1280, 720)
+
+        # Locate the documentation relative to the project folder.
+        self.tutorial_directory = (
+            Path(__file__).resolve().parent.parent / "STEAM_Tutorials"
+        )
+
+        self.build_layout()
+        self.load_reference_files()
+
+    def build_layout(self):
+        # Create the main layout.
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(40, 25, 40, 30)
+        main_layout.setSpacing(20)
+
+        # Create the question field.
+        self.question_input = QLineEdit()
+        self.question_input.setPlaceholderText("Type your question")
+        self.question_input.setAccessibleName("Ask the STEAM assistant")
+        self.question_input.setFixedSize(750, 55)  # Width, height
+        self.question_input.returnPressed.connect(self.submit_question)
+
+        # Balance the Home button so the question stays centered.
+        header_layout = QHBoxLayout()
+        self.home_button = QPushButton("Home")
+        self.home_button.setObjectName("homeButton")
+        self.home_button.setFixedSize(80, 80)
+        self.home_button.clicked.connect(self.close)
+        header_layout.addWidget(self.home_button)
+        header_layout.addStretch()
+        header_layout.addWidget(
+            self.question_input,
+            alignment=Qt.AlignmentFlag.AlignCenter,
+        )
+        header_layout.addStretch()
+        header_layout.addSpacing(80)
+        main_layout.addLayout(header_layout)
+
+        # Create the outer panel containing the response and references.
+        content_panel = QFrame()
+        content_panel.setObjectName("contentPanel")
+
+        content_layout = QVBoxLayout(content_panel)
+        content_layout.setContentsMargins(25, 25, 25, 20)
+        content_layout.setSpacing(25)
+
+        # Create the response area.
+        self.response_display = QTextBrowser()
+        self.response_display.setObjectName("responseDisplay")
+        self.response_display.setPlaceholderText(
+            "Your answer will appear here."
+        )
+        self.response_display.setMinimumSize(320, 250)
+        self.response_display.setMaximumWidth(600)
+
+        content_layout.addWidget(
+            self.response_display,
+            stretch=1,
+            alignment=Qt.AlignmentFlag.AlignHCenter,
+        )
+
+        # Reserve space for the files used by a future AI response.
+        self.source_label = QLabel("Sources used: None")
+        self.source_label.setObjectName("sourceLabel")
+        self.source_label.setWordWrap(True)
+
+        content_layout.addWidget(self.source_label)
+        reference_heading = QLabel("Reference documents")
+        reference_heading.setObjectName("referenceHeading")
+        content_layout.addWidget(reference_heading)
+
+        # Create a scrollable row of reference icons.
+        reference_scroll = QScrollArea()
+        reference_scroll.setWidgetResizable(True)
+        reference_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        reference_scroll.setMinimumHeight(190)
+        reference_scroll.setMaximumHeight(210)
+
+        reference_container = QWidget()
+        self.reference_layout = QHBoxLayout(reference_container)
+        self.reference_layout.setContentsMargins(10, 10, 10, 10)
+        self.reference_layout.setSpacing(25)
+
+        reference_scroll.setWidget(reference_container)
+        content_layout.addWidget(reference_scroll)
+
+        main_layout.addWidget(content_panel, stretch=1)
+
+        # Match the black, white, and blue styling of the other SAGE apps.
+        # Child document dialogs inherit these rules as well.
+        self.setStyleSheet("""
+            QWidget {
+                background-color: black;
+                color: white;
+                font-size: 18px;
+            }
+
+            QLineEdit,
+            QTextBrowser,
+            QFrame#contentPanel {
+                border: 2px solid white;
+                border-radius: 8px;
+            }
+
+            QLineEdit,
+            QTextBrowser {
+                padding: 12px;
+                selection-background-color: #245a81;
+                selection-color: white;
+            }
+
+            QLineEdit {
+                background-color: #222222;
+                placeholder-text-color: #bbbbbb;
+            }
+
+            QLineEdit:focus,
+            QTextBrowser:focus {
+                border-color: #336699;
+            }
+
+            QLabel#sourceLabel {
+                color: #bbbbbb;
+                font-size: 16px;
+            }
+
+            QLabel#referenceHeading {
+                font-size: 20px;
+                font-weight: bold;
+            }
+
+            QToolButton {
+                border: 2px solid white;
+                border-radius: 8px;
+                padding: 10px;
+            }
+
+            QPushButton#homeButton {
+                border: 2px solid white;
+                border-radius: 40px;
+            }
+
+            QPushButton#homeButton:hover,
+            QPushButton#homeButton:focus {
+                background-color: #222222;
+                border-color: #336699;
+            }
+
+            QToolButton:hover {
+                background-color: #222222;
+                border-color: #336699;
+            }
+
+            QToolButton:focus {
+                border-color: #336699;
+            }
+
+            QToolButton:pressed {
+                background-color: #245a81;
+            }
+
+            QToolTip {
+                background-color: #222222;
+                color: white;
+                border: 1px solid #777777;
+                padding: 6px;
+            }
+        """)
+
+    def closeEvent(self, event):
+        # Return to the existing SAGE window with its session intact.
+        self.home_requested.emit()
+        super().closeEvent(event)
+
+    def load_reference_files(self):
+        # Find Markdown files each time the application is opened.
+        reference_files = sorted(
+            (
+                path
+                for path in self.tutorial_directory.glob("*.md")
+                if path.is_file()
+            ),
+            key=lambda path: path.name.lower(),
+        )
+
+        if not reference_files:
+            self.reference_layout.addWidget(
+                QLabel("No Markdown reference files found.")
+            )
+            return
+
+        for file_path in reference_files:
+            # Create a document icon for this file.
+            button = QToolButton()
+            button.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+            button.setIcon(
+                self.style().standardIcon(
+                    QStyle.StandardPixmap.SP_FileIcon
+                )
+            )
+            button.setIconSize(QSize(55, 65))
+            button.setToolButtonStyle(
+                Qt.ToolButtonStyle.ToolButtonTextUnderIcon
+            )
+            button.setText(file_path.stem.replace("_", "\n"))
+            button.setToolTip(file_path.name)
+            button.setMinimumSize(160, 145)
+
+            # Capture this file's path for its button.
+            button.clicked.connect(
+                lambda checked=False, path=file_path:
+                self.open_reference(path)
+            )
+
+            self.reference_layout.addWidget(
+                button,
+                alignment=Qt.AlignmentFlag.AlignCenter,
+            )
+
+    def submit_question(self):
+        # Ignore empty questions.
+        question = self.question_input.text().strip()
+
+        if not question:
+            return
+
+        # Replace the previous response with a placeholder.
+        self.response_display.setPlainText(
+            f"Question: {question}\n\n"
+            "The AI assistant is not connected yet.\n\n"
+            "You can open the reference documents below "
+            "to view the available STEAM Room instructions."
+        )
+        self.source_label.setText("Sources used: None — placeholder response")
+
+    def open_reference(self, file_path):
+        # Open the selected document in a read-only window.
+        dialog = QDialog(self)
+        dialog.setWindowTitle(file_path.name)
+        dialog.resize(750, 600)
+
+        layout = QVBoxLayout(dialog)
+
+        document_viewer = QTextBrowser()
+        layout.addWidget(document_viewer)
+
+        try:
+            contents = file_path.read_text(encoding="utf-8")
+
+            if contents.strip():
+                document_viewer.setMarkdown(contents)
+            else:
+                document_viewer.setPlainText(
+                    "This reference document is currently empty."
+                )
+
+        except (OSError, UnicodeError) as error:
+            document_viewer.setPlainText(
+                f"Unable to open this reference document.\n\n{error}"
+            )
+
+        dialog.exec()
+        dialog.deleteLater()
+
+
+# Allow this application to run independently for testing.
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    window = SteamGuide_App()
+    window.show()
+    sys.exit(app.exec())

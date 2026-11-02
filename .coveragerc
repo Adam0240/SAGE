@@ -1,5 +1,9 @@
 [run]
-source = services
+source =
+    services
+    sage_apps
+    main
+    login_dialog
 relative_files = True
 branch = True
 

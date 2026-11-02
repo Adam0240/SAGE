@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 from login_dialog import LoginDialog
 from sage_apps.account_management_app import AccountManagementDialog
 from sage_apps.gcode_display_print_app import GcodeDisplayPrintApp
+from sage_apps.steamguide_app import SteamGuide_App
 from services.session_service import SessionService
 
 
@@ -29,6 +30,7 @@ class SageWindow(QWidget):
         self.session_service = SessionService()
         self.session_state = self.session_service.start()
         self.gcode_window = None
+        self.steamguide_window = None
 
         # Set the window title, starting size, and background color.
         self.setWindowTitle("SAGE")
@@ -152,6 +154,16 @@ class SageWindow(QWidget):
         self.app_buttons[1].setToolTip("3D Printing")
         self.app_buttons[1].clicked.connect(self.open_gcode_app)
 
+        # The third button opens the STEAM Guide for students and staff.
+        self.app_buttons[2].setText("STEAM\nGuide")
+        self.app_buttons[2].setAccessibleName("STEAM Guide")
+        self.app_buttons[2].setToolTip("STEAM Guide")
+        self.app_buttons[2].setStyleSheet(
+            self.app_buttons[2].styleSheet()
+            + "QPushButton { color: white; font-size: 20px; font-weight: bold; }"
+        )
+        self.app_buttons[2].clicked.connect(self.open_steamguide_app)
+
         app_layout.addStretch()
         main_layout.addLayout(app_layout)
 
@@ -201,16 +213,29 @@ class SageWindow(QWidget):
         self.gcode_window.activateWindow()
         self.hide()
 
+    # Reuse the guide so returning home preserves the question and response.
+    def open_steamguide_app(self):
+        if self.steamguide_window is None:
+            self.steamguide_window = SteamGuide_App(parent=self)
+            self.steamguide_window.setWindowFlag(Qt.WindowType.Window, True)
+            self.steamguide_window.home_requested.connect(self.show_home)
+        self.steamguide_window.show()
+        self.steamguide_window.raise_()
+        self.steamguide_window.activateWindow()
+        self.hide()
+
     # Restore the existing home window and its current login session.
     def show_home(self):
         self.show()
         self.raise_()
         self.activateWindow()
 
-    # Closing SAGE also hides its owned viewer without requesting another return home.
+    # Closing SAGE also hides its apps without requesting another return home.
     def closeEvent(self, event):
         if self.gcode_window is not None:
             self.gcode_window.hide()
+        if self.steamguide_window is not None:
+            self.steamguide_window.hide()
         super().closeEvent(event)
 
     def keyPressEvent(self, event):
