@@ -28,8 +28,34 @@ The window starts in Student Mode with a title, avatar placeholder, and applicat
 buttons. Staff login enables account management, including a My Password form for
 Work Study Assistants. The second application button opens the G-code viewer;
 its Home button returns to the existing SAGE screen and preserves the current session
-and file selection. The third application button is currently a placeholder.
+and file selection. The third application button opens STEAM Guide; its Home button
+preserves the current question, response, and session.
 Close the home window or press Escape on the home screen to exit.
+
+## STEAM Guide document search
+
+Type a question and press Enter to search the Markdown files in `STEAM_Tutorials`.
+For example, try "Why won't OctoPrint connect?" or "My print isn't sticking."
+Clear matches display the original instructions and the source filename and heading.
+Similar matches request clarification; unsupported questions return no clear answer.
+This version uses local keyword search with a small synonym list, not AI-generated
+answers or a diagnosis. Specific equipment names and symptoms improve results.
+Mixed printer/laser questions request clarification, and searches naming one machine
+exclude documents explicitly titled for the other. Recognized phrases such as
+"not dark enough" preserve their meaning; other negated wording asks for rephrasing
+instead of silently dropping the negation. This is a limited keyword-search system,
+so unfamiliar wording may still require a more specific question or browsing the
+reference documents directly.
+
+Use `#` for a document title and `##` / `###` for descriptive topic and troubleshooting
+headings. Keep each procedure and its cautions together under the relevant heading.
+Parent-section guidance is included with matching subsections. Added, edited, and
+removed files are picked up on the next question without restarting the application.
+
+`services/document_retrieval_service.py` loads and ranks sections independently of
+the interface. `services/guide_response_service.py` formats matches and handles
+uncertainty; a future AI responder can use the same retrieved sections and sources.
+No AI credentials, network service, or database are required for document search.
 
 ## Set up staff login
 

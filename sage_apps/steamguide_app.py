@@ -18,11 +18,18 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+# Keep standalone launches able to import the shared services.
+if __name__ == "__main__" and __package__ is None:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from services.document_retrieval_service import DocumentRetrievalService
+from services.guide_response_service import GuideResponseService
+
 
 class SteamGuide_App(QWidget):
     home_requested = Signal()
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, tutorial_directory=None):
         super().__init__(parent)
 
         self.setWindowTitle("SAGE - STEAM Assistant")
@@ -30,8 +37,11 @@ class SteamGuide_App(QWidget):
 
         # Locate the documentation relative to the project folder.
         self.tutorial_directory = (
-            Path(__file__).resolve().parent.parent / "STEAM_Tutorials"
+            Path(tutorial_directory) if tutorial_directory is not None
+            else Path(__file__).resolve().parent.parent / "STEAM_Tutorials"
         )
+        self.retrieval_service = DocumentRetrievalService(self.tutorial_directory)
+        self.response_service = GuideResponseService()
 
         self.build_layout()
         self.load_reference_files()
@@ -88,7 +98,7 @@ class SteamGuide_App(QWidget):
             alignment=Qt.AlignmentFlag.AlignHCenter,
         )
 
-        # Reserve space for the files used by a future AI response.
+        # Identify the actual document sections used by the current response.
         self.source_label = QLabel("Sources used: None")
         self.source_label.setObjectName("sourceLabel")
         self.source_label.setWordWrap(True)
@@ -202,15 +212,12 @@ class SteamGuide_App(QWidget):
         super().closeEvent(event)
 
     def load_reference_files(self):
-        # Find Markdown files each time the application is opened.
-        reference_files = sorted(
-            (
-                path
-                for path in self.tutorial_directory.glob("*.md")
-                if path.is_file()
-            ),
-            key=lambda path: path.name.lower(),
-        )
+        # Rebuild from the current index so added and removed files stay in sync.
+        while self.reference_layout.count():
+            item = self.reference_layout.takeAt(0)
+            if item.widget() is not None:
+                item.widget().deleteLater()
+        reference_files = self.retrieval_service.files
 
         if not reference_files:
             self.reference_layout.addWidget(
@@ -253,14 +260,13 @@ class SteamGuide_App(QWidget):
         if not question:
             return
 
-        # Replace the previous response with a placeholder.
-        self.response_display.setPlainText(
-            f"Question: {question}\n\n"
-            "The AI assistant is not connected yet.\n\n"
-            "You can open the reference documents below "
-            "to view the available STEAM Room instructions."
+        result = self.retrieval_service.search(question)
+        response = self.response_service.respond(question, result)
+        self.response_display.setMarkdown(response.markdown)
+        self.source_label.setText(
+            "Sources used: " + ("; ".join(response.sources) or "None")
         )
-        self.source_label.setText("Sources used: None — placeholder response")
+        self.load_reference_files()
 
     def open_reference(self, file_path):
         # Open the selected document in a read-only window.
