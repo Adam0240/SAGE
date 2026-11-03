@@ -15,6 +15,7 @@ from database.connection import DatabaseConfigurationError, SessionLocal
 from database.user_repository import UserRepository
 from services.authentication_service import AuthenticationService
 from services.password_service import PasswordService
+from database.timeouts import is_database_timeout
 
 
 class LoginWorker(QObject):
@@ -49,8 +50,8 @@ class LoginWorker(QObject):
 
         except DatabaseConfigurationError as error:
             result = ("configuration_error", str(error))
-        except SQLAlchemyError:
-            result = ("database_error", None)
+        except SQLAlchemyError as error:
+            result = ("database_timeout" if is_database_timeout(error) else "database_error", None)
         except Exception:
             # Keep unexpected failures recoverable without exposing account data.
             result = ("error", None)
@@ -188,6 +189,8 @@ class LoginDialog(QDialog):
             self.error_label.setText(
                 "Database unavailable. Try again later."
             )
+        elif status == "database_timeout":
+            self.error_label.setText("Database request timed out. Please try logging in again.")
         elif status == "invalid":
             self.error_label.setText("Invalid username or password.")
         else:

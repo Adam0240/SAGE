@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from database.timeouts import is_database_timeout
 
 from database.account_operations import (
     create_account,
@@ -68,8 +69,11 @@ class AccountWorker(QObject):
             result = ("error", str(error))
         except IntegrityError:
             result = ("error", "That username is already in use.")
-        except SQLAlchemyError:
-            result = ("error", "Database unavailable. Try again later.")
+        except SQLAlchemyError as error:
+            message = ("Database request timed out. Reopen account management to check "
+                       "the result before retrying." if is_database_timeout(error) else
+                       "Database unavailable. Try again later.")
+            result = ("error", message)
         except Exception:
             # Do not leave the screen waiting if an unexpected error occurs.
             result = ("error", "Could not complete the account operation.")

@@ -206,3 +206,27 @@ class TestLoginThreadLifecycle(unittest.TestCase):
         self.wait_until(lambda: self.dialog._thread is None)
         self.assertTrue(self.dialog.close())
         self.assertFalse(self.dialog.isVisible())
+
+    # Timeout errors close the session, restore controls, permit dismissal, and allow a new login.
+    def test_database_timeouts_allow_close_and_retry(self):
+        from psycopg.errors import QueryCanceled, LockNotAvailable
+        from sqlalchemy.exc import OperationalError
+        from database.timeouts import DatabaseWaitTimeout
+        for error in (QueryCanceled, LockNotAvailable, DatabaseWaitTimeout):
+            with self.subTest(error=error.__name__):
+                self.authentication.authenticate.side_effect = OperationalError(
+                    "private query", {}, error("private server detail"))
+                self.dialog.show()
+                self.dialog.password_input.setText("test password")
+                self.start_and_wait()
+                self.assertIn("timed out", self.dialog.error_label.text())
+                self.assertNotIn("private", self.dialog.error_label.text())
+                self.assertIsNone(self.dialog.user_id)
+                self.assertTrue(self.dialog.close())
+                self.authentication.authenticate.side_effect = None
+                self.dialog.password_input.setText("retry password")
+                self.start_and_wait()
+                self.assertEqual(self.dialog.result(), QDialog.DialogCode.Accepted)
+                self.dialog.close()
+                self.dialog = LoginDialog()
+                self.dialog.username_input.setText("staff")

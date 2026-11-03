@@ -6,8 +6,9 @@ from pathlib import Path
 from threading import Lock
 
 from dotenv import dotenv_values
-from sqlalchemy import URL, create_engine
+from sqlalchemy import URL, create_engine, event
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from database.timeouts import connect_with_deadline
 
 
 class DatabaseConfigurationError(ValueError):
@@ -58,8 +59,15 @@ def get_engine():
             _engine = create_engine(
                 get_database_url(),
                 pool_pre_ping=True,
-                connect_args={"connect_timeout": 3},
+                pool_timeout=5,
+                connect_args={
+                    "connect_timeout": 3,
+                    "options": "-c statement_timeout=10000 -c lock_timeout=3000 "
+                               "-c idle_in_transaction_session_timeout=15000 "
+                               "-c transaction_timeout=20000",
+                },
             )
+            event.listen(_engine, "do_connect", connect_with_deadline)
         return _engine
 
 

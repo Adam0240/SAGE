@@ -50,6 +50,7 @@ class CalibrationWindow(QWidget):
             self.worker.observation.connect(self.on_observation)
             self.worker.failed.connect(self.on_failure)
             self.worker.finished.connect(self.on_worker_finished)
+            QApplication.instance().aboutToQuit.connect(self.worker.wait)
             self.worker.start()
 
     def restart(self):

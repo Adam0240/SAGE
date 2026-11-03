@@ -43,7 +43,8 @@ without a hand returns `True`; acquisition/inference failure returns `False` wit
 
 Processing is synchronous to keep each result paired with its frame. When this is
 integrated into Qt, create and use the manager in a worker thread, not the GUI
-thread. The standalone calibration tool uses a worker thread for this purpose.
+thread. SAGE and the standalone Qt calibration tool use a separate camera process
+supervised by a Qt timer, so a blocked native camera call can be stopped safely.
 
 Before moving on, verify on the actual camera that the marker follows your index
 finger across the image, disappears when your hand leaves, and the camera is
@@ -131,7 +132,13 @@ Close. Existing busy-operation restrictions still apply when closing staff dialo
 Opening/closing windows or changing tabs resets pending dwell.
 Another full dwell is required on the newly active screen. Camera activation pauses
 when an external application has focus; the system mouse is never moved. Closing
-SAGE requests camera cleanup before closing the window.
+SAGE requests camera cleanup before closing the window. The camera has 0.75 seconds
+to stop normally before its process is terminated, with a kill fallback after another
+0.5 seconds. The UI remains responsive during normal window closure. Startup times
+out after 30 seconds; a running camera that produces no observations for 5 seconds
+is stopped with an error. Application exit has a bounded cleanup fallback when Qt
+timers can no longer run. Verify unplugging/reconnecting and closing on your webcam;
+automated tests simulate blocked capture in real child processes.
 
 Hardware checks (the automated suite simulates camera input):
 

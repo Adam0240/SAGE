@@ -81,7 +81,7 @@ class TestDatabaseConfiguration(unittest.TestCase):
     def test_shared_engine_recovery(self):
         valid_values = self.values.copy()
         self.values = {}
-        with patch.object(connection, "_engine", None), patch("database.connection.create_engine") as create:
+        with patch.object(connection, "_engine", None), patch("database.connection.create_engine") as create, patch("database.connection.event.listen") as listen:
             with self.assertRaises(DatabaseConfigurationError):
                 connection.get_engine()
             create.assert_not_called()
@@ -90,3 +90,91 @@ class TestDatabaseConfiguration(unittest.TestCase):
                 engines = list(workers.map(lambda _index: connection.get_engine(), range(2)))
             self.assertIs(engines[0], engines[1])
             create.assert_called_once()
+            options = create.call_args.kwargs
+            self.assertEqual(options["pool_timeout"], 5)
+            self.assertEqual(options["connect_args"]["connect_timeout"], 3)
+            for setting in ("statement_timeout=10000", "lock_timeout=3000",
+                            "transaction_timeout=20000"):
+                self.assertIn(setting, options["connect_args"]["options"])
+            listen.assert_called_once_with(create.return_value, "do_connect", connection.connect_with_deadline)
+
+
+class TestDatabaseDeadline(unittest.TestCase):
+    # Exercise the transaction wrapper's real rollback and subsequent retry in an ephemeral database.
+    def test_timeout_rolls_back_account_transaction_before_retry(self):
+        from unittest.mock import Mock
+        from sqlalchemy import create_engine, text
+        from sqlalchemy.orm import sessionmaker
+        from sqlalchemy.exc import OperationalError
+        from psycopg.errors import QueryCanceled
+        from database import account_operations
+
+        engine = create_engine("sqlite:///:memory:")
+        self.addCleanup(engine.dispose)
+        with engine.begin() as db:
+            db.execute(text("CREATE TABLE example (value INTEGER)"))
+            db.execute(text("INSERT INTO example VALUES (1)"))
+        fail = [True]
+        def service_for(session):
+            def update(*args, **kwargs):
+                session.execute(text("UPDATE example SET value=2"))
+                if fail[0]:
+                    raise OperationalError("update", {}, QueryCanceled("statement timeout"))
+            return Mock(update_account=update)
+        with patch.object(account_operations, "SessionLocal", sessionmaker(bind=engine)), patch.object(
+            account_operations, "_make_service", side_effect=service_for
+        ):
+            with self.assertRaises(OperationalError):
+                account_operations.update_account(1, 2, name="changed")
+            with engine.connect() as db:
+                self.assertEqual(db.scalar(text("SELECT value FROM example")), 1)
+            fail[0] = False
+            account_operations.update_account(1, 2, name="changed")
+            with engine.connect() as db:
+                self.assertEqual(db.scalar(text("SELECT value FROM example")), 2)
+
+    # Exercise psycopg's real socket waiter against a silent local socket, without PostgreSQL.
+    def test_silent_connection_times_out_and_is_discarded(self):
+        import socket
+        import time
+        from unittest.mock import Mock
+        from psycopg import pq
+        from psycopg.waiting import Wait
+        from database.timeouts import DeadlineConnection, DatabaseWaitTimeout
+
+        def awaiting_response():
+            while True:
+                yield Wait.R
+
+        for explicit in (None, 0.02):
+            with self.subTest(explicit=explicit):
+                reader, writer = socket.socketpair()
+                try:
+                    pgconn = Mock(socket=reader.fileno(), status=pq.ConnStatus.OK)
+                    pgconn.finish.side_effect = lambda: setattr(pgconn, "status", pq.ConnStatus.BAD)
+                    client = DeadlineConnection(pgconn)
+                    client.wait_timeout = 0.05
+                    started = time.monotonic()
+                    with self.assertRaises(DatabaseWaitTimeout):
+                        client.wait(awaiting_response(), timeout=explicit)
+                    self.assertLess(time.monotonic() - started, 1)
+                    pgconn.finish.assert_called_once()
+                    self.assertTrue(client.closed)
+                finally:
+                    reader.close()
+                    writer.close()
+
+    # Successful waits preserve the connection; do_connect retains SQLAlchemy's connection arguments.
+    def test_connection_factory_and_successful_wait(self):
+        from unittest.mock import Mock
+        import psycopg
+        from database.timeouts import DeadlineConnection, connect_with_deadline
+        with patch.object(DeadlineConnection, "connect") as connect:
+            self.assertIs(connect_with_deadline(None, None, ["dbname=test"], {"connect_timeout": 3}), connect.return_value)
+            connect.assert_called_once_with("dbname=test", connect_timeout=3)
+        client = DeadlineConnection(Mock())
+        with patch.object(psycopg.Connection, "wait", return_value=42) as wait, patch.object(client, "close") as close:
+            self.assertEqual(client.wait(iter(()), timeout=1), 42)
+            self.assertEqual(wait.call_args.kwargs["timeout"], 1)
+            close.assert_not_called()
+        client.pgconn.status = psycopg.pq.ConnStatus.BAD

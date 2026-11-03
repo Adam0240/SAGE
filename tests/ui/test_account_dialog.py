@@ -142,6 +142,30 @@ class TestAccountDialog(unittest.TestCase):
 
 
 class TestAccountThreadLifecycle(unittest.TestCase):
+    # Timed-out changes are not retried automatically; the dialog can close after worker cleanup.
+    def test_timeout_restores_account_controls_without_retrying(self):
+        from psycopg.errors import QueryCanceled, LockNotAvailable
+        from sqlalchemy.exc import OperationalError
+        from database.timeouts import DatabaseWaitTimeout
+        for error in (QueryCanceled, LockNotAvailable, DatabaseWaitTimeout):
+            with self.subTest(error=error.__name__), patch(
+                "sage_apps.account_management_app.update_account",
+                side_effect=OperationalError("private query", {}, error("private detail")),
+            ) as update:
+                dialog = AccountManagementDialog(2, "base_specialist")
+                self.addCleanup(self.close_dialog, dialog)
+                dialog.show()
+                dialog.edit_password_input.setText("long-test-password")
+                dialog.edit_confirm_input.setText("long-test-password")
+                dialog.update_button.click()
+                self.wait_for_worker(dialog)
+                self.assertTrue(dialog.tabs.isEnabled())
+                self.assertIn("timed out", dialog.status_label.text())
+                self.assertIn("check the result", dialog.status_label.text())
+                self.assertNotIn("private", dialog.status_label.text())
+                update.assert_called_once()
+                self.assertTrue(dialog.close())
+
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])

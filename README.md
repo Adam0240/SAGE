@@ -91,6 +91,16 @@ The Compose database uses a persistent volume. Editing `.env` does not change cr
 already initialized in that volume; use the existing database credentials for an existing
 installation. The migration and bootstrap commands modify the selected database.
 
+Staff database work uses the PostgreSQL 17 server supplied by Compose. SAGE limits
+lock waits to 3 seconds, individual statements to 10 seconds, and transactions to
+20 seconds. Idle transactions expire after 15 seconds. Pool checkout waits at most
+5 seconds; new connections use a 3-second connect timeout. A client socket wait
+also has a 15-second deadline, after which the connection is discarded. These
+limits apply per stage, including shared-engine migration/bootstrap operations.
+After timeout cleanup, the staff dialog permits closing or retrying. Account
+changes are never retried automatically: reopen account management to check the
+result before retrying, because a lost commit response may hide a successful change.
+
 ## Environment overrides
 
 Environment variables with the same five `POSTGRES_*` names override `.env` values,

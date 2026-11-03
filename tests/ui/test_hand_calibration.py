@@ -3,9 +3,12 @@ from unittest.mock import Mock, patch
 
 import pytest
 from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import QTimer
+from PySide6.QtTest import QTest
 
 from TouchControls.calibration import Calibration
 from TouchControls.hand_calibration import CalibrationWindow, CameraWorker
+from TouchControls.camera_worker import capture_process
 
 
 @pytest.fixture
@@ -120,10 +123,158 @@ def test_worker_failure_releases_camera_and_emits_error():
     camera.__exit__ = Mock()
     camera.update.return_value = False
     camera.last_error = "Camera disconnected"
-    worker = CameraWorker(0, "test.task")
-    errors = []
-    worker.failed.connect(errors.append)
-    with patch("TouchControls.camera_worker.CameraManager", return_value=camera):
-        worker.run()
-    assert errors == ["Camera disconnected"]
+    connection = Mock()
+    connection.poll.return_value = False
+    with patch("TouchControls.camera_manager.CameraManager", return_value=camera):
+        capture_process(connection, 0, "test.task")
+    connection.send.assert_called_once_with(("error", "Camera disconnected"))
+    connection.close.assert_called_once()
     camera.__exit__.assert_called_once()
+
+
+def simulated_capture(connection, mode, model_path):
+    """Spawnable fake driver: signal readiness, then cooperate, fail, or hang."""
+    if mode == 4:
+        time.sleep(60)  # Camera opening never produces the first observation.
+    connection.send(("observation", (10.0, 20.0), (640, 480), time.monotonic()))
+    if mode == 1:
+        connection.send(("error", "Camera disconnected"))
+        connection.close()
+        return
+    if mode == 2:
+        connection.close()
+        return
+    if mode == 3:
+        connection.recv()
+        connection.close()
+        return
+    # Simulate a native call that does not honor the stop request.
+    time.sleep(60)
+
+
+def wait_until(app, condition, timeout=10):
+    deadline = time.monotonic() + timeout
+    while not condition() and time.monotonic() < deadline:
+        app.processEvents()
+        QTest.qWait(10)
+    assert condition()
+
+
+@pytest.mark.parametrize("mode", [0, 1, 2, 3])
+def test_process_shutdown_and_failures_keep_event_loop_responsive(mode):
+    app = QApplication.instance() or QApplication([])
+    worker = CameraWorker(mode, "unused", process_target=simulated_capture,
+                          stop_timeout=0.1)
+    observations, failures, completed, ticks = [], [], [], []
+    worker.observation.connect(lambda *value: observations.append(value))
+    worker.failed.connect(failures.append)
+    worker.finished.connect(lambda: completed.append(True))
+    heartbeat = QTimer()
+    heartbeat.setInterval(10)
+    heartbeat.timeout.connect(lambda: ticks.append(True))
+    heartbeat.start()
+    try:
+        worker.start()
+        if mode in (0, 3):
+            wait_until(app, lambda: bool(observations))
+            assert observations[0][:2] == ((10.0, 20.0), (640, 480))
+        before = len(ticks)
+        started = time.monotonic()
+        if mode in (0, 3):
+            worker.requestInterruption()
+            worker.requestInterruption()  # Repeated closes must not extend grace.
+        wait_until(app, lambda: bool(completed), timeout=3)
+        assert time.monotonic() - started < 3
+        assert completed == [True]
+        assert not worker.isRunning()
+        assert worker.connection is None
+        if mode == 0:
+            assert len(ticks) > before + 2
+            assert worker.terminated
+        assert failures == (["Camera disconnected"] if mode == 1 else
+                            ["Camera tracking process stopped unexpectedly."] if mode == 2 else [])
+    finally:
+        heartbeat.stop()
+        assert worker.wait()
+
+
+@pytest.mark.parametrize("phase", ["startup", "frame", "quit"])
+def test_camera_deadlines_and_application_quit_are_bounded(phase):
+    app = QApplication.instance() or QApplication([])
+    worker = CameraWorker(4 if phase == "startup" else 0, "unused",
+                          process_target=simulated_capture, stop_timeout=0.1,
+                          frame_timeout=0.15,
+                          startup_timeout=0.15 if phase == "startup" else 30)
+    observations, failures, completed = [], [], []
+    worker.observation.connect(lambda *value: observations.append(value))
+    worker.failed.connect(failures.append)
+    worker.finished.connect(lambda: completed.append(True))
+    try:
+        worker.start()
+        if phase != "startup":
+            wait_until(app, lambda: bool(observations))
+        if phase == "quit":
+            started = time.monotonic()
+            # No Qt event pumping: exercise the aboutToQuit fallback.
+            assert worker.wait()
+            assert time.monotonic() - started < 2
+            assert not failures
+        else:
+            wait_until(app, lambda: bool(completed), timeout=3)
+            assert len(failures) == 1
+            assert "timed out" in failures[0]
+        assert completed == [True]
+        assert not worker.isRunning()
+    finally:
+        assert worker.wait()
+
+
+@pytest.mark.parametrize("mode", [0, 4])
+def test_calibration_closes_with_stuck_camera_process(window, mode):
+    app = QApplication.instance()
+    worker = CameraWorker(mode, "unused", window,
+                          process_target=simulated_capture, stop_timeout=0.1)
+    window.worker = worker
+    worker.finished.connect(window.on_worker_finished)
+    observations = []
+    worker.observation.connect(lambda *value: observations.append(value))
+    try:
+        worker.start()
+        if mode == 0:
+            wait_until(app, lambda: bool(observations))
+        assert not window.close()
+        assert window.closing
+        wait_until(app, lambda: not window.isVisible(), timeout=3)
+        assert not worker.isRunning()
+    finally:
+        assert worker.wait()
+
+
+def test_process_failure_during_modal_observation_handler():
+    from PySide6.QtCore import QEventLoop
+
+    app = QApplication.instance() or QApplication([])
+    worker = CameraWorker(0, "unused", process_target=simulated_capture,
+                          frame_timeout=0.15, stop_timeout=0.1)
+    completed = []
+    worker.finished.connect(lambda: completed.append(True))
+    returned = []
+
+    def open_modal(*_):
+        loop = QEventLoop()
+        worker.finished.connect(loop.quit)
+        deadline = QTimer()
+        deadline.setSingleShot(True)
+        deadline.timeout.connect(loop.quit)
+        deadline.start(3000)
+        loop.exec()
+        returned.append(True)
+
+    worker.observation.connect(open_modal)
+    try:
+        worker.start()
+        wait_until(app, lambda: bool(returned))
+        assert completed == [True]
+        assert not worker.isRunning()
+    finally:
+        assert worker.wait()
