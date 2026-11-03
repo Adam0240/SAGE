@@ -3,12 +3,14 @@ import time
 from unittest.mock import Mock, patch
 
 import pytest
-from PySide6.QtCore import QObject, QPoint, Signal
-from PySide6.QtWidgets import QApplication, QDialog
+from PySide6.QtCore import QObject, QPoint, Signal, QTimer, Qt
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QPushButton, QLineEdit, QListWidget, QComboBox, QTextBrowser
 
 from main import SageWindow
 from TouchControls.calibration import Calibration, target_points
 from TouchControls.home_input import HomeInputController
+from TouchControls.widgets import TouchChoices
 
 
 class FakeWorker(QObject):
@@ -36,7 +38,7 @@ def setup(tmp_path, monkeypatch):
     app = QApplication.instance() or QApplication([])
     clock = [time.monotonic()]
     monkeypatch.setattr("TouchControls.home_input.time.monotonic", lambda: clock[0])
-    window = SageWindow()
+    window = SageWindow(camera_controls=False)
     window.show()
     window.activateWindow()
     app.processEvents()
@@ -47,10 +49,11 @@ def setup(tmp_path, monkeypatch):
     controller = HomeInputController(window, calibration_path=path, worker_factory=FakeWorker)
     monkeypatch.setattr(controller, "geometry", lambda: ((0, 0, 1920, 1080), 1))
     window.camera_controller = controller
-    controller.status_changed.connect(window.camera_status.setText)
+    statuses = []
+    controller.status_changed.connect(statuses.append)
     controller.stopped.connect(window.camera_stopped)
     controller.start()
-    state = SimpleNamespace(app=app, window=window, controller=controller, clock=clock, path=path)
+    state = SimpleNamespace(app=app, window=window, controller=controller, clock=clock, path=path, statuses=statuses)
     yield state
     controller.stop()
     if controller.worker is not None:
@@ -152,7 +155,7 @@ def test_resolution_change_stops_input_and_requests_recalibration(setup):
     observe(s, center(s.window.app_buttons[2]), size=(640, 480))
     assert not s.controller.enabled
     assert worker.stop_requested
-    assert "calibration again" in s.window.camera_status.text()
+    assert "calibration again" in s.statuses[-1]
 
 
 def test_display_scale_change_stops_input(setup, monkeypatch):
@@ -174,7 +177,7 @@ def test_missing_or_invalid_calibration_does_not_open_camera(setup):
             s.path.write_text(contents)
         s.controller.start()
         assert not s.controller.enabled
-        assert "unavailable" in s.window.camera_status.text()
+        assert "unavailable" in s.statuses[-1]
     s.controller.worker_factory.assert_not_called()
 
 
@@ -188,8 +191,7 @@ def test_disable_and_camera_error_clear_pointer(setup):
     assert worker.stop_requested
     worker.finished.emit()
     assert s.controller.worker is None
-    assert s.window.camera_button.text() == "Enable camera"
-    assert "disconnected" in s.window.camera_status.text()
+    assert "disconnected" in s.statuses[-1]
 
 
 def test_closing_home_waits_for_camera_cleanup(setup):
@@ -219,13 +221,279 @@ def test_mode_dwell_opens_login_once_and_logout_does_not_repeat(setup):
         dialog.assert_not_called()
 
 
-def test_disable_button_can_be_selected_by_dwell(setup):
+def test_default_startup_starts_camera_once_without_controls():
+    app = QApplication.instance() or QApplication([])
+    controller = Mock()
+    controller.worker = None
+    with patch("TouchControls.home_input.HomeInputController", return_value=controller) as factory:
+        window = SageWindow()
+        try:
+            factory.assert_not_called()
+            window.show()
+            app.processEvents()
+            factory.assert_called_once_with(window)
+            controller.start.assert_called_once()
+            assert not hasattr(window, "camera_button")
+            assert not hasattr(window, "camera_status")
+            assert len(window.findChildren(QPushButton)) == 4
+            window.hide()
+            window.show()
+            app.processEvents()
+            controller.start.assert_called_once()
+        finally:
+            window.close()
+            window.deleteLater()
+            app.processEvents()
+
+
+def test_closing_before_startup_does_not_open_camera():
+    app = QApplication.instance() or QApplication([])
+    with patch("TouchControls.home_input.HomeInputController") as factory:
+        window = SageWindow()
+        window.show()
+        window.close()
+        app.processEvents()
+        factory.assert_not_called()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_camera_failure_has_dismissible_dialog_instead_of_status_row(setup):
     s = setup
-    worker = s.controller.worker
-    observe(s, center(s.window.camera_button), 12)
-    assert not s.controller.enabled
-    assert worker.stop_requested
-    assert not s.window.camera_button.isEnabled()
-    worker.finished.emit()
-    assert s.window.camera_button.isEnabled()
-    assert s.window.camera_status.text() == "Camera controls off"
+    s.window.show_camera_error("Camera disconnected")
+    s.app.processEvents()
+    dialog = s.window.findChild(QMessageBox)
+    assert dialog.isVisible()
+    assert "Camera disconnected" in dialog.text()
+    assert "Mouse and keyboard" in dialog.text()
+    dialog.accept()
+    s.app.processEvents()
+    assert s.window.isVisible()
+
+
+def dwell_widget(s, widget):
+    # The offscreen Qt backend does not restore native focus after modal close.
+    widget.window().activateWindow()
+    s.app.processEvents()
+    s.controller.use_window(s.controller.current_window())
+    observe(s, center(widget), 13)
+
+
+def in_modal(s, action, callback):
+    errors = []
+    initial = QApplication.activeModalWidget()
+    called = []
+    timer = QTimer()
+    timer.setInterval(10)
+    def run():
+        dialog = QApplication.activeModalWidget()
+        if dialog is None or dialog is initial:
+            return
+        timer.stop()
+        called.append(True)
+        try:
+            assert dialog is not None
+            callback(dialog)
+        except Exception as error:
+            errors.append(error)
+        finally:
+            if dialog is not None and dialog.isVisible():
+                dialog.reject()
+    timer.timeout.connect(run)
+    timer.start()
+    try:
+        action()
+    finally:
+        timer.stop()
+    if errors:
+        raise errors[0]
+    assert called, "Expected a modal dialog to open"
+
+
+def key(dialog, label):
+    return next(button for button in dialog.findChildren(QPushButton) if button.text() == label)
+
+
+def test_guide_dwell_focus_physical_typing_ask_and_home(setup):
+    s = setup
+    dwell_widget(s, s.window.app_buttons[2])
+    guide = s.window.steamguide_window
+    dwell_widget(s, guide.question_input)
+    assert QApplication.activeModalWidget() is None
+    assert guide.question_input.hasFocus()
+    QTest.keyClicks(QApplication.focusWidget(), "hours")
+    assert guide.question_input.text() == "hours"
+    dwell_widget(s, guide.ask_button)
+    assert "placeholder" not in guide.response_display.toPlainText()
+    assert "STEAM Room Hours" in guide.source_label.text()
+    dwell_widget(s, guide.home_button)
+    assert s.window.isVisible()
+
+
+def test_readonly_or_disabled_fields_do_not_receive_dwell_focus(setup):
+    s = setup
+    field = QLineEdit(s.window)
+    field.show()
+    field.setText("original")
+    s.window.mode_button.setFocus()
+    field.setReadOnly(True)
+    s.controller.activate_target((field, "edit", None))
+    assert not field.hasFocus()
+    field.setReadOnly(False)
+    field.setEnabled(False)
+    s.controller.activate_target((field, "edit", None))
+    assert not field.hasFocus()
+    assert field.text() == "original"
+
+
+def test_dropdown_selection_and_cancel_preserve_underlying_values(setup):
+    s = setup
+    combo = QComboBox(s.window)
+    combo.addItem("First", 17)
+    combo.addItem("Second", 42)
+    combo.addItem("Disabled", 99)
+    combo.model().item(2).setEnabled(False)
+    combo.show()
+    def select(dialog):
+        assert isinstance(dialog, TouchChoices)
+        s.app.processEvents()
+        viewport = dialog.items.viewport()
+        position = viewport.mapToGlobal(dialog.items.visualItemRect(dialog.items.item(1)).center())
+        s.controller.use_window(dialog)
+        observe(s, (position.x(), position.y()), 13)
+        dwell_widget(s, dialog.select_button)
+    in_modal(s, lambda: s.controller.activate_target((combo, "choice", None)), select)
+    assert combo.currentData() == 42
+    picker = TouchChoices(combo)
+    picker.items.setCurrentRow(2)
+    assert not picker.select_button.isEnabled()
+    picker.reject()
+    assert combo.currentData() == 42
+
+
+def test_gcode_navigation_file_list_and_home(setup, tmp_path):
+    s = setup
+    from sage_apps import gcode_display_print_app as module
+    for name in ("a.gcode", "b.gcode"):
+        (tmp_path / name).write_text("G1 X0 Y0\nG1 X10 Y10\n")
+    with patch.object(module, "GCODE_DIR", tmp_path), patch.object(module, "THUMB_DIR", tmp_path / "thumbs"):
+        dwell_widget(s, s.window.app_buttons[1])
+    viewer = s.window.gcode_window
+    assert not viewer.start_print_button.isEnabled()
+    dwell_widget(s, viewer.next_button)
+    assert viewer.filename_label.text() == "b.gcode"
+    def choose(dialog):
+        items = dialog.findChild(QListWidget)
+        assert items is not None
+        s.app.processEvents()
+        position = items.viewport().mapToGlobal(items.visualItemRect(items.item(0)).center())
+        s.controller.use_window(dialog)
+        observe(s, (position.x(), position.y()), 13)
+        from PySide6.QtWidgets import QDialogButtonBox
+        button = dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.StandardButton.Open)
+        dwell_widget(s, button)
+    in_modal(s, lambda: dwell_widget(s, viewer.file_list_button), choose)
+    assert viewer.filename_label.text() == "a.gcode"
+    dwell_widget(s, viewer.home_button)
+    assert s.window.isVisible()
+
+
+def test_reference_scrolling_and_close(setup):
+    s = setup
+    dwell_widget(s, s.window.app_buttons[2])
+    guide = s.window.steamguide_window
+    def read(dialog):
+        viewer = dialog.findChild(QTextBrowser)
+        viewer.setPlainText("\n".join(f"Instruction {i}" for i in range(300)))
+        s.app.processEvents()
+        before = viewer.verticalScrollBar().value()
+        dwell_widget(s, key(dialog, "Down"))
+        assert viewer.verticalScrollBar().value() > before
+        after = viewer.verticalScrollBar().value()
+        observe(s, center(key(dialog, "Down")), 20)
+        assert viewer.verticalScrollBar().value() == after
+        dwell_widget(s, key(dialog, "Close"))
+    in_modal(s, lambda: dwell_widget(s, guide.reference_layout.itemAt(0).widget()), read)
+    assert guide.isVisible()
+
+
+def test_account_tabs_close_and_external_windows_are_isolated(setup):
+    s = setup
+    from sage_apps.account_management_app import AccountManagementDialog
+    with patch.object(AccountManagementDialog, "_start_operation"):
+        dialog = AccountManagementDialog(1, "boss_admin", parent=s.window)
+    dialog.setModal(True)
+    dialog.show()
+    s.app.processEvents()
+    bar = dialog.tabs.tabBar()
+    position = bar.mapToGlobal(bar.tabRect(1).intersected(bar.rect()).center())
+    s.controller.use_window(dialog)
+    observe(s, (position.x(), position.y()), 13)
+    assert dialog.tabs.currentIndex() == 1
+    assert not dialog.delete_button.isEnabled()
+    dwell_widget(s, dialog.close_button)
+    assert not dialog.isVisible()
+    external = QDialog()
+    external.show()
+    external.activateWindow()
+    s.app.processEvents()
+    assert s.controller.current_window() is None
+    observe(s, center(s.window.app_buttons[2]), 20)
+    assert s.window.steamguide_window is None
+    external.close()
+
+
+def test_login_physical_typing_account_dialog_and_logout(setup):
+    s = setup
+    from login_dialog import LoginDialog, LoginWorker
+    from sage_apps.account_management_app import AccountManagementDialog
+    def login(dialog):
+        assert isinstance(dialog, LoginDialog)
+        for field, text in ((dialog.username_input, "staff"), (dialog.password_input, "example password")):
+            dwell_widget(s, field)
+            assert QApplication.activeModalWidget() is dialog
+            assert field.hasFocus()
+            QTest.keyClicks(QApplication.focusWidget(), text)
+        assert dialog.password_input.echoMode() == QLineEdit.EchoMode.Password
+        with patch.object(LoginWorker, "run", lambda worker: worker.completed.emit(
+                ("success", (7, "Staff", "boss_admin")))):
+            dwell_widget(s, dialog.login_button)
+            for _ in range(50):
+                QTest.qWait(10)
+                if dialog._thread is None:
+                    break
+            assert dialog._thread is None
+            assert dialog.result() == QDialog.DialogCode.Accepted
+    in_modal(s, lambda: dwell_widget(s, s.window.mode_button), login)
+    assert s.window.session_state.user_id == 7
+    assert s.window.app_buttons[0].isEnabled()
+    def manage(dialog):
+        assert dialog.actor_id == 7
+        assert dialog.actor_role == "boss_admin"
+        dwell_widget(s, dialog.close_button)
+    with patch.object(AccountManagementDialog, "_start_operation"):
+        in_modal(s, lambda: dwell_widget(s, s.window.app_buttons[0]), manage)
+    dwell_widget(s, s.window.mode_button)
+    assert s.window.session_state.mode == "student"
+    assert not s.window.app_buttons[0].isEnabled()
+
+
+def test_delete_confirmation_requires_separate_selection_and_can_cancel(setup):
+    s = setup
+    from sage_apps.account_management_app import AccountManagementDialog
+    with patch.object(AccountManagementDialog, "_start_operation") as operation:
+        dialog = AccountManagementDialog(1, "boss_admin", parent=s.window)
+        dialog._show_accounts([(2, "Other Staff", "other", "base_specialist", True)])
+        dialog.tabs.setCurrentIndex(1)
+        dialog.setModal(True)
+        dialog.show()
+        s.app.processEvents()
+        operation.reset_mock()
+        def cancel(confirmation):
+            assert isinstance(confirmation, QMessageBox)
+            assert s.controller.current_window() is confirmation
+            operation.assert_not_called()
+            dwell_widget(s, confirmation.button(QMessageBox.StandardButton.No))
+        in_modal(s, lambda: dwell_widget(s, dialog.delete_button), cancel)
+        operation.assert_not_called()
+        dialog.close()

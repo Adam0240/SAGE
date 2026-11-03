@@ -96,6 +96,10 @@ class LoginDialog(QDialog):
         self.login_button = QPushButton("Log In")
         self.login_button.clicked.connect(self.attempt_login)
         layout.addWidget(self.login_button)
+        self.cancel_button = QPushButton("Cancel")
+        self.cancel_button.setMinimumHeight(44)
+        self.cancel_button.clicked.connect(self.reject)
+        layout.addWidget(self.cancel_button)
 
         self.password_input.returnPressed.connect(self.attempt_login)
 

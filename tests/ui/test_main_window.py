@@ -18,7 +18,7 @@ class TestStartup(unittest.TestCase):
 
     # Tests opening/closing SAGE, anonymous Student Mode, and default application-button availability.
     def test_student_mode_defaults(self):
-        window = SageWindow()
+        window = SageWindow(camera_controls=False)
         self.addCleanup(window.close)
         window.show()
         self.app.processEvents()
@@ -39,7 +39,7 @@ class TestStartup(unittest.TestCase):
 
     # Tests that pressing Escape requests application shutdown exactly once.
     def test_escape_requests_exit(self):
-        window = SageWindow()
+        window = SageWindow(camera_controls=False)
         self.addCleanup(window.close)
         window.show()
         with patch("main.QApplication.quit") as quit_app:
@@ -62,7 +62,7 @@ class TestGcodeNavigation(unittest.TestCase):
             setting = patch.object(gcode_app, name, value)
             setting.start()
             self.addCleanup(setting.stop)
-        self.window = SageWindow()
+        self.window = SageWindow(camera_controls=False)
         self.addCleanup(self.window.close)
         self.window.show()
         self.app.processEvents()
@@ -120,7 +120,7 @@ class TestLoginWorkflow(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def setUp(self):
-        self.window = SageWindow()
+        self.window = SageWindow(camera_controls=False)
         self.addCleanup(self.window.close)
 
     def log_in(self, role):

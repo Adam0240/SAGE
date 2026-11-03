@@ -24,6 +24,7 @@ if __name__ == "__main__" and __package__ is None:
 
 from services.document_retrieval_service import DocumentRetrievalService
 from services.guide_response_service import GuideResponseService
+from TouchControls.widgets import scroll_controls
 
 
 class SteamGuide_App(QWidget):
@@ -31,6 +32,7 @@ class SteamGuide_App(QWidget):
 
     def __init__(self, parent=None, *, tutorial_directory=None):
         super().__init__(parent)
+        self.setProperty("sageTouchWindow", True)
 
         self.setWindowTitle("SAGE - STEAM Assistant")
         self.resize(1280, 720)
@@ -56,7 +58,8 @@ class SteamGuide_App(QWidget):
         self.question_input = QLineEdit()
         self.question_input.setPlaceholderText("Type your question")
         self.question_input.setAccessibleName("Ask the STEAM assistant")
-        self.question_input.setFixedSize(750, 55)  # Width, height
+        self.question_input.setMinimumHeight(55)
+        self.question_input.setMaximumWidth(750)
         self.question_input.returnPressed.connect(self.submit_question)
 
         # Balance the Home button so the question stays centered.
@@ -72,7 +75,10 @@ class SteamGuide_App(QWidget):
             alignment=Qt.AlignmentFlag.AlignCenter,
         )
         header_layout.addStretch()
-        header_layout.addSpacing(80)
+        self.ask_button = QPushButton("Ask SAGE")
+        self.ask_button.setMinimumSize(130, 55)
+        self.ask_button.clicked.connect(self.submit_question)
+        header_layout.addWidget(self.ask_button)
         main_layout.addLayout(header_layout)
 
         # Create the outer panel containing the response and references.
@@ -97,6 +103,7 @@ class SteamGuide_App(QWidget):
             stretch=1,
             alignment=Qt.AlignmentFlag.AlignHCenter,
         )
+        content_layout.addWidget(scroll_controls(self.response_display))
 
         # Identify the actual document sections used by the current response.
         self.source_label = QLabel("Sources used: None")
@@ -122,6 +129,7 @@ class SteamGuide_App(QWidget):
 
         reference_scroll.setWidget(reference_container)
         content_layout.addWidget(reference_scroll)
+        content_layout.addWidget(scroll_controls(reference_scroll, horizontal=True))
 
         main_layout.addWidget(content_panel, stretch=1)
 
@@ -172,6 +180,17 @@ class SteamGuide_App(QWidget):
                 border: 2px solid white;
                 border-radius: 8px;
                 padding: 10px;
+            }
+
+            QPushButton {
+                border: 2px solid white;
+                border-radius: 8px;
+                padding: 8px;
+            }
+
+            QPushButton:disabled {
+                color: #777777;
+                border-color: #777777;
             }
 
             QPushButton#homeButton {
@@ -278,6 +297,11 @@ class SteamGuide_App(QWidget):
 
         document_viewer = QTextBrowser()
         layout.addWidget(document_viewer)
+        layout.addWidget(scroll_controls(document_viewer))
+        close_button = QPushButton("Close")
+        close_button.setMinimumHeight(44)
+        close_button.clicked.connect(dialog.reject)
+        layout.addWidget(close_button)
 
         try:
             contents = file_path.read_text(encoding="utf-8")

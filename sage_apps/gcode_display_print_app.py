@@ -17,6 +17,7 @@ if __name__ == "__main__" and __package__ is None:
 from services.gcode_preview_service import (
     GcodePreviewService, NoPreviewableMovementError, UnreadableGcodeError,
 )
+from TouchControls.widgets import scroll_controls
 
 # Folder containing the G-code files available for printing.
 GCODE_DIR = Path(
@@ -31,6 +32,7 @@ class GcodeDisplayPrintApp(QWidget):
     def __init__(self, parent=None, *, gcode_dir=None, thumbnail_dir=None):
         # Set up the QWidget and connect it to a parent widget if one is provided.
         super().__init__(parent)
+        self.setProperty("sageTouchWindow", True)
 
         # Use installation defaults unless the caller supplies different folders.
         self.gcode_dir = Path(gcode_dir) if gcode_dir is not None else GCODE_DIR
@@ -292,6 +294,7 @@ class GcodeDisplayPrintApp(QWidget):
         file_list.setCurrentRow(self.current_file_index)
         file_list.scrollToItem(file_list.currentItem())
         layout.addWidget(file_list)
+        layout.addWidget(scroll_controls(file_list))
         no_matches_label = QLabel("No matching G-code files.")
         no_matches_label.setObjectName("no_matches_label")
         no_matches_label.hide()

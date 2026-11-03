@@ -83,7 +83,7 @@ def test_reference_viewer_handles_documents_and_read_failures(guide, kind, expec
 
 @pytest.mark.parametrize("staff", [False, True])
 def test_launcher_home_close_and_shutdown_preserve_guide_state(guide, staff):
-    window = SageWindow()
+    window = SageWindow(camera_controls=False)
     try:
         if staff:
             window.session_state = window.session_service.log_in(

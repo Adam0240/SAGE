@@ -1,15 +1,15 @@
 # SAGE Main UI
 
 import sys
-from contextlib import nullcontext
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import Qt, QSize, QTimer
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -23,7 +23,7 @@ from services.session_service import SessionService
 
 
 class SageWindow(QWidget):
-    def __init__(self):
+    def __init__(self, *, camera_controls=True):
         # Set up the QWidget before adding the SAGE window settings.
         super().__init__()
 
@@ -34,6 +34,11 @@ class SageWindow(QWidget):
         self.steamguide_window = None
         self.camera_controller = None
         self._camera_closing = False
+        self._auto_camera = camera_controls
+        self._camera_start_attempted = False
+        self._camera_start_timer = QTimer(self)
+        self._camera_start_timer.setSingleShot(True)
+        self._camera_start_timer.timeout.connect(self.start_camera_controls)
 
         # Set the window title, starting size, and background color.
         self.setWindowTitle("SAGE")
@@ -173,51 +178,41 @@ class SageWindow(QWidget):
         # Leave flexible space below the application buttons.
         main_layout.addStretch(1)
 
-        camera_row = QHBoxLayout()
-        self.camera_button = QPushButton("Enable camera")
-        self.camera_button.setMinimumSize(180, 50)
-        self.camera_button.setStyleSheet(
-            "color: white; font-size: 18px; border: 2px solid white; border-radius: 8px; padding: 8px;"
-        )
-        self.camera_button.clicked.connect(self.toggle_camera_controls)
-        self.camera_status = QLabel("Camera controls off")
-        self.camera_status.setWordWrap(True)
-        self.camera_status.setStyleSheet("color: white; font-size: 16px;")
-        camera_row.addWidget(self.camera_button)
-        camera_row.addWidget(self.camera_status, stretch=1)
-        main_layout.addLayout(camera_row)
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self._auto_camera and not self._camera_start_attempted:
+            self._camera_start_timer.start(0)
 
-    def toggle_camera_controls(self):
+    def start_camera_controls(self):
+        if self._camera_start_attempted or self._camera_closing or not self.isVisible():
+            return
+        self._camera_start_attempted = True
         if self.camera_controller is None:
-            # Camera packages are only loaded when the operator enables tracking.
+            # Start after Home has a screen, so calibration uses its actual display.
             try:
                 from TouchControls.home_input import HomeInputController
             except (ImportError, OSError) as error:
-                self.camera_status.setText(
+                self.show_camera_error(
                     f"Camera dependencies unavailable. Install requirements.txt. ({error})"
                 )
                 return
             self.camera_controller = HomeInputController(self)
-            self.camera_controller.status_changed.connect(self.camera_status.setText)
+            self.camera_controller.error_occurred.connect(self.show_camera_error)
             self.camera_controller.stopped.connect(self.camera_stopped)
-        if self.camera_controller.worker is not None:
-            self.camera_controller.stop()
-            self.camera_button.setEnabled(False)
-            self.camera_status.setText("Closing camera…")
-        else:
-            self.camera_button.setText("Disable camera")
-            self.camera_controller.start()
+        self.camera_controller.start()
+
+    def show_camera_error(self, message):
+        if self._camera_closing:
+            return
+        dialog = QMessageBox(QMessageBox.Icon.Warning, "Camera controls unavailable",
+                             message + "\n\nMouse and keyboard controls remain available.",
+                             QMessageBox.StandardButton.Ok, self)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialog.open()
 
     def camera_stopped(self):
-        self.camera_button.setText("Enable camera")
-        self.camera_button.setEnabled(True)
-        if self.camera_status.text() == "Closing camera…":
-            self.camera_status.setText("Camera controls off")
         if self._camera_closing:
             self.close()
-
-    def pause_camera_input(self):
-        return self.camera_controller.suspended() if self.camera_controller else nullcontext()
 
     def handle_mode_button(self):
         # Clicking the mode button while logged in returns to Student Mode.
@@ -230,8 +225,7 @@ class SageWindow(QWidget):
         # Student Mode opens the administrator login dialog.
         dialog = LoginDialog(self)
 
-        with self.pause_camera_input():
-            result = dialog.exec()
+        result = dialog.exec()
         if result == LoginDialog.DialogCode.Accepted:
             self.session_state = self.session_service.log_in(
                 user_id=dialog.user_id,
@@ -251,8 +245,7 @@ class SageWindow(QWidget):
             actor_role=self.session_state.mode,
             parent=self,
         )
-        with self.pause_camera_input():
-            dialog.exec()
+        dialog.exec()
 
     # Reuse the viewer so returning home does not discard the selected file.
     def open_gcode_app(self):
@@ -284,10 +277,10 @@ class SageWindow(QWidget):
 
     # Closing SAGE also hides its apps without requesting another return home.
     def closeEvent(self, event):
+        self._camera_start_timer.stop()
         if self.camera_controller is not None and self.camera_controller.worker is not None:
             self._camera_closing = True
             self.camera_controller.stop()
-            self.camera_status.setText("Closing camera…")
             event.ignore()
             return
         if self.gcode_window is not None:

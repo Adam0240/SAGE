@@ -107,6 +107,10 @@ class AccountManagementDialog(QDialog):
         self.status_label = QLabel("")
         self.status_label.setObjectName("account_status")
         layout.addWidget(self.status_label)
+        self.close_button = QPushButton("Close")
+        self.close_button.setMinimumHeight(44)
+        self.close_button.clicked.connect(self.reject)
+        layout.addWidget(self.close_button)
 
         self.setStyleSheet("""
             QDialog {
@@ -136,7 +140,8 @@ class AccountManagementDialog(QDialog):
             QTabBar::tab {
                 background-color: #222222;
                 color: white;
-                padding: 8px;
+                padding: 14px;
+                font-size: 18px;
             }
             QTabBar::tab:selected {
                 background-color: blue;

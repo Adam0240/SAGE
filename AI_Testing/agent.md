@@ -2,7 +2,7 @@
 
 Perform a full, read-only code review of this SAGE repository
 
-Review the application code, database model and migration, repository and services, PySide6 UI and login threading, tests, Docker Compose configuration, requirements, README, and comments. Look for correctness bugs, security or permission problems, UI freezes, missing or undiscovered tests, outdated documentation, and unnecessary code. Check whether the current implementation supports the Initializing SAGE use case.
+Review the application code, repository and services, PySide6 UI and login threading, tests, requirements, README, and comments. Look for correctness bugs, security or permission problems, UI freezes, missing or undiscovered tests, duplication, outdated documentation, and unnecessary code. 
 
 Run the existing tests if the required environment is already available. Do not start Docker, change the database, install dependencies, or claim tests passed if they could not be run.
 

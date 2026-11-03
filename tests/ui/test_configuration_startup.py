@@ -20,7 +20,7 @@ with patch('dotenv.dotenv_values', return_value={}) as settings, patch(
     from main import SageWindow
     from login_dialog import LoginDialog
     app = QApplication([])
-    window = SageWindow()
+    window = SageWindow(camera_controls=False)
     window.show()
     app.processEvents()
     assert window.isVisible()

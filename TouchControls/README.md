@@ -94,32 +94,51 @@ Home-screen camera controls load this file when enabled. A successful hardware
 calibration must be performed on your desk; automated tests verify the workflow
 and mathematics with simulated input.
 
-## Enable one-second dwell on Home
+## Automatic one-second dwell throughout SAGE
 
-Close the standalone calibration/preview tool, start SAGE normally, and click
-**Enable camera** at the bottom of Home. Controls start off each time SAGE launches.
-The saved calibration supplies the camera index. Missing/invalid calibration,
+Close the standalone calibration/preview tool and start SAGE normally. Camera
+controls start automatically when Home first appears, using the saved calibration's
+camera index. There is no enable/disable button or status row. Missing/invalid calibration,
 changed camera resolution, or changed display geometry/scaling prevents activation
-and displays a status message. Run calibration again if the setup changes.
+and displays a dismissible error dialog; mouse and keyboard input remain available.
+Restart SAGE after correcting a camera/setup failure. Run calibration again if the setup changes.
 
 A white pointer follows your index fingertip. Hold it over an enabled Home button
 for one continuous second; a green ring shows progress. Move away before activating
 the same button again. Losing tracking cancels pending progress, and brief tracking
-loss does not rearm an already activated button. Use **Disable camera** to stop
-tracking; it can also be selected by dwell.
+loss does not rearm an already activated button.
 
-The mode button and three app launchers use their existing handlers and account
-permissions. Circular launchers only respond inside their circular area. Coordinates
-account for the window position, so the Home window does not have to be full screen.
-Windows duplicate-display mode continues to handle projector output.
+The same camera session follows the active SAGE window. Home, G-code viewer,
+STEAM Guide, login/account dialogs, document viewers, and confirmation dialogs use
+their existing handlers and account permissions. Modal dialogs take priority over
+the screen behind them. Disabled controls remain unavailable. Circular Home
+launchers only respond inside their circular area. Coordinates account for each
+window's position; keep SAGE windows on the calibrated display. Windows duplicate
+mode continues to handle projector output.
 
-Activation pauses when Home is hidden/inactive or a dialog opens. Returning Home
-starts a fresh dwell; apps and login/account dialogs still require mouse/keyboard
-input in this phase. The camera remains open while activation is paused. Closing
-SAGE requests camera cleanup before closing the window. Input is delivered only to
-SAGE Home controls; the operating-system mouse pointer is not moved.
+Hold over an editable text field to focus it, then type using the physical keyboard.
+No pop-up keyboard is displayed. Password fields remain masked. Hold over a dropdown to open a
+larger option picker, select a row, then choose Select. File-list rows are selected
+by dwell and opened using the existing Open button. Account tabs can be selected
+by dwell; their scroll arrows work if labels do not all fit.
 
-Hardware check: enable tracking, hover over a launcher, confirm exactly one opening,
-return with the app's Home button, then verify another full dwell is required.
-Check pointer alignment across Home and ensure moving away or removing your hand
-cancels the progress ring. Use a mouse to disable camera controls if needed.
+Use Up/Down buttons to scroll answers, reference documents, option lists, and file
+lists; Left/Right scrolls the reference cards. Each activation advances half a page,
+and requires departure before repeating. STEAM Guide has an Ask SAGE button.
+Document viewers have Close buttons; login has Cancel and account management has
+Close. Existing busy-operation restrictions still apply when closing staff dialogs.
+
+Opening/closing windows or changing tabs resets pending dwell.
+Another full dwell is required on the newly active screen. Camera activation pauses
+when an external application has focus; the system mouse is never moved. Closing
+SAGE requests camera cleanup before closing the window.
+
+Hardware checks (the automated suite simulates camera input):
+
+- Open G-code, select files with arrows and the searchable list, and return Home.
+- Enter a STEAM Guide question with the physical keyboard, select Ask SAGE, scroll the
+  answer, open/scroll/close a reference, and return Home.
+- Log in, navigate account tabs and dropdowns, cancel confirmation dialogs, close
+  account management, and log out. Use test accounts when checking account changes.
+- Check that removing your hand cancels dwell and holding over a control only
+  activates it once. Confirm no underlying screen reacts while a dialog is open.
