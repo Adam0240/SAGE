@@ -5,3 +5,7 @@ __pycache__/
 .vscode/
 .env
 /sage_apps/thumbnails/
+/OldImplmentation
+/TouchControls/models/*.task
+/TouchControls/calibration.json
+/TouchControls/calibration.json.*.tmp
