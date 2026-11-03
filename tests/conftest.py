@@ -14,6 +14,8 @@ REQUIRED_TEST_MODULES = {
     "unit/test_guide_services.py",
     "unit/test_camera_manager.py",
     "unit/test_calibration.py",
+    "unit/test_dwell.py",
+    "ui/test_home_camera_input.py",
     "ui/test_hand_calibration.py",
     "ui/test_main_window.py",
     "ui/test_gcodedisplayapp.py",

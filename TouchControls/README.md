@@ -90,6 +90,36 @@ resolution/scaling changes. Software cannot automatically detect every physical
 movement, so check alignment before reuse. The mapping assumes a flat desk and
 does not detect contact or correct for fingers held substantially above the surface.
 
-SAGE does not load or act on this file yet. Home-screen dwell activation is a
-separate next step. A successful hardware calibration still needs to be performed
-on your desk; automated tests verify the workflow and mathematics with simulated input.
+Home-screen camera controls load this file when enabled. A successful hardware
+calibration must be performed on your desk; automated tests verify the workflow
+and mathematics with simulated input.
+
+## Enable one-second dwell on Home
+
+Close the standalone calibration/preview tool, start SAGE normally, and click
+**Enable camera** at the bottom of Home. Controls start off each time SAGE launches.
+The saved calibration supplies the camera index. Missing/invalid calibration,
+changed camera resolution, or changed display geometry/scaling prevents activation
+and displays a status message. Run calibration again if the setup changes.
+
+A white pointer follows your index fingertip. Hold it over an enabled Home button
+for one continuous second; a green ring shows progress. Move away before activating
+the same button again. Losing tracking cancels pending progress, and brief tracking
+loss does not rearm an already activated button. Use **Disable camera** to stop
+tracking; it can also be selected by dwell.
+
+The mode button and three app launchers use their existing handlers and account
+permissions. Circular launchers only respond inside their circular area. Coordinates
+account for the window position, so the Home window does not have to be full screen.
+Windows duplicate-display mode continues to handle projector output.
+
+Activation pauses when Home is hidden/inactive or a dialog opens. Returning Home
+starts a fresh dwell; apps and login/account dialogs still require mouse/keyboard
+input in this phase. The camera remains open while activation is paused. Closing
+SAGE requests camera cleanup before closing the window. Input is delivered only to
+SAGE Home controls; the operating-system mouse pointer is not moved.
+
+Hardware check: enable tracking, hover over a launcher, confirm exactly one opening,
+return with the app's Home button, then verify another full dwell is required.
+Check pointer alignment across Home and ensure moving away or removing your hand
+cancels the progress ring. Use a mouse to disable camera controls if needed.

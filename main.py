@@ -1,6 +1,7 @@
 # SAGE Main UI
 
 import sys
+from contextlib import nullcontext
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QSize
@@ -31,6 +32,8 @@ class SageWindow(QWidget):
         self.session_state = self.session_service.start()
         self.gcode_window = None
         self.steamguide_window = None
+        self.camera_controller = None
+        self._camera_closing = False
 
         # Set the window title, starting size, and background color.
         self.setWindowTitle("SAGE")
@@ -170,6 +173,52 @@ class SageWindow(QWidget):
         # Leave flexible space below the application buttons.
         main_layout.addStretch(1)
 
+        camera_row = QHBoxLayout()
+        self.camera_button = QPushButton("Enable camera")
+        self.camera_button.setMinimumSize(180, 50)
+        self.camera_button.setStyleSheet(
+            "color: white; font-size: 18px; border: 2px solid white; border-radius: 8px; padding: 8px;"
+        )
+        self.camera_button.clicked.connect(self.toggle_camera_controls)
+        self.camera_status = QLabel("Camera controls off")
+        self.camera_status.setWordWrap(True)
+        self.camera_status.setStyleSheet("color: white; font-size: 16px;")
+        camera_row.addWidget(self.camera_button)
+        camera_row.addWidget(self.camera_status, stretch=1)
+        main_layout.addLayout(camera_row)
+
+    def toggle_camera_controls(self):
+        if self.camera_controller is None:
+            # Camera packages are only loaded when the operator enables tracking.
+            try:
+                from TouchControls.home_input import HomeInputController
+            except (ImportError, OSError) as error:
+                self.camera_status.setText(
+                    f"Camera dependencies unavailable. Install requirements.txt. ({error})"
+                )
+                return
+            self.camera_controller = HomeInputController(self)
+            self.camera_controller.status_changed.connect(self.camera_status.setText)
+            self.camera_controller.stopped.connect(self.camera_stopped)
+        if self.camera_controller.worker is not None:
+            self.camera_controller.stop()
+            self.camera_button.setEnabled(False)
+            self.camera_status.setText("Closing camera…")
+        else:
+            self.camera_button.setText("Disable camera")
+            self.camera_controller.start()
+
+    def camera_stopped(self):
+        self.camera_button.setText("Enable camera")
+        self.camera_button.setEnabled(True)
+        if self.camera_status.text() == "Closing camera…":
+            self.camera_status.setText("Camera controls off")
+        if self._camera_closing:
+            self.close()
+
+    def pause_camera_input(self):
+        return self.camera_controller.suspended() if self.camera_controller else nullcontext()
+
     def handle_mode_button(self):
         # Clicking the mode button while logged in returns to Student Mode.
         if self.session_state.user_id is not None:
@@ -181,7 +230,9 @@ class SageWindow(QWidget):
         # Student Mode opens the administrator login dialog.
         dialog = LoginDialog(self)
 
-        if dialog.exec() == LoginDialog.DialogCode.Accepted:
+        with self.pause_camera_input():
+            result = dialog.exec()
+        if result == LoginDialog.DialogCode.Accepted:
             self.session_state = self.session_service.log_in(
                 user_id=dialog.user_id,
                 user_name=dialog.user_name,
@@ -200,7 +251,8 @@ class SageWindow(QWidget):
             actor_role=self.session_state.mode,
             parent=self,
         )
-        dialog.exec()
+        with self.pause_camera_input():
+            dialog.exec()
 
     # Reuse the viewer so returning home does not discard the selected file.
     def open_gcode_app(self):
@@ -232,6 +284,12 @@ class SageWindow(QWidget):
 
     # Closing SAGE also hides its apps without requesting another return home.
     def closeEvent(self, event):
+        if self.camera_controller is not None and self.camera_controller.worker is not None:
+            self._camera_closing = True
+            self.camera_controller.stop()
+            self.camera_status.setText("Closing camera…")
+            event.ignore()
+            return
         if self.gcode_window is not None:
             self.gcode_window.hide()
         if self.steamguide_window is not None:
@@ -241,7 +299,10 @@ class SageWindow(QWidget):
     def keyPressEvent(self, event):
         # End the application when the Escape key is pressed.
         if event.key() == Qt.Key.Key_Escape:
-            QApplication.quit()
+            if self.camera_controller is not None and self.camera_controller.worker is not None:
+                self.close()
+            else:
+                QApplication.quit()
         else:
             # Keep the default behavior for other keys.
             super().keyPressEvent(event)

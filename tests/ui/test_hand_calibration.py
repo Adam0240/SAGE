@@ -123,7 +123,7 @@ def test_worker_failure_releases_camera_and_emits_error():
     worker = CameraWorker(0, "test.task")
     errors = []
     worker.failed.connect(errors.append)
-    with patch("TouchControls.hand_calibration.CameraManager", return_value=camera):
+    with patch("TouchControls.camera_worker.CameraManager", return_value=camera):
         worker.run()
     assert errors == ["Camera disconnected"]
     camera.__exit__.assert_called_once()
