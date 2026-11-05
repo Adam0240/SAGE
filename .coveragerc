@@ -1,10 +1,8 @@
 [run]
 source =
-    services
     sage_apps
-    main
-    login_dialog
-relative_files = True
+    services
+relative_files = False
 branch = True
 
 [report]

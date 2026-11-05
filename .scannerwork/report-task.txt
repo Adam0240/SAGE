@@ -2,5 +2,5 @@ projectKey=SAGE-Services
 serverUrl=http://localhost:9000
 serverVersion=26.10.0.133078
 dashboardUrl=http://localhost:9000/dashboard?id=SAGE-Services
-ceTaskId=14da2f49-46f5-4a60-b460-c8ce44d87295
-ceTaskUrl=http://localhost:9000/api/ce/task?id=14da2f49-46f5-4a60-b460-c8ce44d87295
+ceTaskId=ec50c681-b6cd-45eb-9b35-d2e0589affef
+ceTaskUrl=http://localhost:9000/api/ce/task?id=ec50c681-b6cd-45eb-9b35-d2e0589affef
