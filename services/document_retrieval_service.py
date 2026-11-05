@@ -97,6 +97,13 @@ def interpret_question(question):
     return question, ""
 
 
+@dataclass
+class _Heading:
+    level: int
+    text: str
+    body: str = ""
+
+
 def parse_sections(filename, markdown):
     """Split ATX headings, retaining lists, fenced code, and ancestor guidance."""
     title = Path(filename).stem
@@ -108,7 +115,13 @@ def parse_sections(filename, markdown):
     def flush():
         body = "\n".join(lines).strip()
         if body:
-            records.append((tuple(stack), body))
+            # Snapshot actual ancestors while this heading instance is active.
+            # A later heading with the same text belongs to a different branch.
+            context = "\n\n".join(node.body for node in stack[:-1] if node.body)
+            hierarchy = tuple((node.level, node.text) for node in stack)
+            records.append((hierarchy, body, context))
+            if stack:
+                stack[-1].body = body
         lines.clear()
 
     for line in markdown.splitlines():
@@ -125,9 +138,9 @@ def parse_sections(filename, markdown):
         if heading:
             flush()
             level, text = len(heading.group(1)), heading.group(2)
-            while stack and stack[-1][0] >= level:
+            while stack and stack[-1].level >= level:
                 stack.pop()
-            stack.append((level, text))
+            stack.append(_Heading(level, text))
             if level == 1:
                 title = text
         else:
@@ -136,15 +149,10 @@ def parse_sections(filename, markdown):
 
     sections = []
     counts = {}
-    for hierarchy, body in records:
+    for hierarchy, body, context in records:
         headings = tuple(text for level, text in hierarchy if level != 1)
         key = "/".join(text for _, text in hierarchy) or title
         counts[key] = counts.get(key, 0) + 1
-        context = "\n\n".join(
-            parent_body for parent, parent_body in records
-            if parent and len(parent) < len(hierarchy)
-            and hierarchy[:len(parent)] == parent
-        )
         sections.append(DocumentSection(
             f"{filename}#{key}:{counts[key]}", filename, title, headings, body, context,
         ))

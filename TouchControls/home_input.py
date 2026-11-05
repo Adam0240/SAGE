@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
 from shiboken6 import isValid
 
 from TouchControls.calibration import Calibration, DEFAULT_CALIBRATION_PATH
-from TouchControls.camera_manager import DEFAULT_MODEL_PATH
+from TouchControls.paths import DEFAULT_MODEL_PATH
 from TouchControls.camera_worker import CameraWorker
 from TouchControls.dwell import DwellTracker
 from TouchControls.widgets import TouchChoices

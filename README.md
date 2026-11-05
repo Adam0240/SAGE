@@ -18,6 +18,15 @@ python -m venv .venv
 ```
 
 The commands below use the environment's Python directly, so activation is optional.
+Camera controls start automatically when Home opens. On each new device, follow
+the [camera setup and calibration guide](TouchControls/README.md): download the
+Hand Landmarker model, check the webcam, and save a calibration for the desk/display
+setup. Dependencies and the model are installed once per environment/device;
+calibration is reused until the physical setup or display settings change.
+Close the calibration/preview tool before launching SAGE so it releases the webcam.
+Missing calibration/model files or a camera failure display a dismissible error;
+mouse and physical-keyboard controls remain available.
+
 Student Mode can open without database credentials or a running database:
 
 ```powershell
@@ -32,9 +41,21 @@ and file selection. The third application button opens STEAM Guide; its Home but
 preserves the current question, response, and session.
 Close the home window or press Escape on the home screen to exit.
 
+G-code previews load in the background, so navigation and Home remain available
+while a preview is generated. Rapid file changes keep only the latest queued
+selection. Returning Home cancels the current preview; reopening the viewer resumes
+it if needed. Uncached files exceeding 500,000 X/Y positions display a size-limit
+message rather than a partial preview. Previews support straight-line X/Y movements;
+the Start Print button is disabled because printing is not implemented.
+
+Camera input uses a one-second index-finger hover over SAGE controls. It works
+across Home, the G-code viewer, STEAM Guide, and owned dialogs. Text fields use a
+physical keyboard after being focused. Use in-dialog Close/Cancel buttons: the
+camera pointer does not extend into native Windows title bars or other applications.
+
 ## STEAM Guide document search
 
-Type a question and press Enter to search the Markdown files in `STEAM_Tutorials`.
+Type a question and press Enter or select Ask SAGE to search the Markdown files in `STEAM_Tutorials`.
 For example, try "Why won't OctoPrint connect?" or "My print isn't sticking."
 Clear matches display the original instructions and the source filename and heading.
 Similar matches request clarification; unsupported questions return no clear answer.
@@ -91,15 +112,9 @@ The Compose database uses a persistent volume. Editing `.env` does not change cr
 already initialized in that volume; use the existing database credentials for an existing
 installation. The migration and bootstrap commands modify the selected database.
 
-Staff database work uses the PostgreSQL 17 server supplied by Compose. SAGE limits
-lock waits to 3 seconds, individual statements to 10 seconds, and transactions to
-20 seconds. Idle transactions expire after 15 seconds. Pool checkout waits at most
-5 seconds; new connections use a 3-second connect timeout. A client socket wait
-also has a 15-second deadline, after which the connection is discarded. These
-limits apply per stage, including shared-engine migration/bootstrap operations.
-After timeout cleanup, the staff dialog permits closing or retrying. Account
-changes are never retried automatically: reopen account management to check the
-result before retrying, because a lost commit response may hide a successful change.
+Staff operations have database timeouts. After timeout cleanup, the dialog permits
+closing or retrying. Reopen account management to check the result before retrying
+a change; losing the connection does not prove the change failed.
 
 ## Environment overrides
 

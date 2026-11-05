@@ -6,7 +6,7 @@ from pathlib import Path
 from PySide6.QtCore import QPointF
 from PySide6.QtGui import QColor, QImage, QPainter, QPen
 
-from services.gcode_parser import read_gcode_coordinates
+from services.gcode_parser import read_gcode_coordinates, PreviewCancelled, GcodeTooLargeError
 
 
 class UnreadableGcodeError(Exception):
@@ -18,11 +18,17 @@ class NoPreviewableMovementError(Exception):
 
 
 class GcodePreviewService:
+    MAX_COORDINATES = 500_000
     def __init__(self, thumbnail_dir):
         self.thumbnail_dir = Path(thumbnail_dir)
 
     # Return a cached or newly rendered image, or raise a defined preview error.
-    def get_preview(self, file_path):
+    def get_preview(self, file_path, *, cancel_event=None):
+        def check_cancelled():
+            if cancel_event is not None and cancel_event.is_set():
+                raise PreviewCancelled
+
+        check_cancelled()
         preview_path = None
 
         try:
@@ -54,7 +60,8 @@ class GcodePreviewService:
             return image
 
         try:
-            coordinates = read_gcode_coordinates(file_path)
+            coordinates = read_gcode_coordinates(
+                file_path, cancel_event=cancel_event, max_coordinates=self.MAX_COORDINATES)
         except (OSError, UnicodeError, ValueError) as error:
             raise UnreadableGcodeError from error
 
@@ -89,26 +96,30 @@ class GcodePreviewService:
 
         # Convert printer coordinates into image positions.
         # Reverse Y because image coordinates increase downward.
-        points = [
+        points = (
             QPointF(
                 offset_x + (x - min_x) * scale,
                 height - (offset_y + (y - min_y) * scale)
             )
             for x, y in coordinates
-        ]
+        )
 
         # Connect each position to the next with a light-gray line.
         painter = QPainter(image)
         painter.setPen(QPen(QColor("lightgray"), 1))
         try:
-            for start, end in zip(points, points[1:]):
+            start = next(points)
+            for end in points:
+                check_cancelled()
                 painter.drawLine(start, end)
+                start = end
         finally:
             # Finish drawing before converting the image for display.
             painter.end()
 
         # Save the full-size image for future selections and app launches.
         # A failed save does not prevent the current preview from displaying.
+        check_cancelled()
         if preview_path is not None:
             image.save(str(preview_path), "PNG")
 

@@ -1,7 +1,7 @@
 """Capture one hand's index fingertip in camera pixels, before calibration.
 
 Run directly or with ``python -m TouchControls.camera_manager`` for a preview.
-This synchronous component must run in a worker when later integrated with Qt.
+SAGE and Qt calibration run this synchronous component in a supervised child process.
 """
 
 import argparse
@@ -10,13 +10,16 @@ from pathlib import Path
 import sys
 import time
 
+if __name__ == "__main__" and __package__ is None:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 import cv2
 import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 
 
-DEFAULT_MODEL_PATH = Path(__file__).resolve().parent / "models" / "hand_landmarker.task"
+from TouchControls.paths import DEFAULT_MODEL_PATH
 INDEX_FINGERTIP = 8
 
 

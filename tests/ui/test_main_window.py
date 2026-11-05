@@ -4,9 +4,13 @@ import unittest
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
-from PySide6.QtCore import Qt
+import pytest
+from PySide6.QtCore import Qt, QTimer, QEvent
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QDialog
+from PySide6.QtWidgets import QApplication, QDialog, QLineEdit
+from shiboken6 import isValid
+from login_dialog import LoginDialog
+from sage_apps.account_management_app import AccountManagementDialog
 from main import SageWindow
 from sage_apps import gcode_display_print_app as gcode_app
 
@@ -63,8 +67,19 @@ class TestGcodeNavigation(unittest.TestCase):
             setting.start()
             self.addCleanup(setting.stop)
         self.window = SageWindow(camera_controls=False)
-        self.addCleanup(self.window.close)
+        self.addCleanup(self.close_window)
         self.window.show()
+        self.app.processEvents()
+
+    def close_window(self):
+        self.window.close()
+        viewer = self.window.gcode_window
+        if viewer is not None:
+            viewer.preview_loader.cancel()
+            thread = viewer.preview_loader.thread
+            if thread is not None:
+                thread.join(timeout=5)
+                self.assertFalse(thread.is_alive())
         self.app.processEvents()
 
     # Tests Student Mode can open the viewer and Home restores the same SAGE window and selection.
@@ -112,6 +127,91 @@ ROLES = (
     ("steam_specialist", "STEAM Specialist"),
     ("base_specialist", "Work_Study Assistant"),
 )
+
+
+@pytest.mark.parametrize("finish", ["cancel", "escape", "close", "accept"])
+def test_repeated_login_dialogs_clear_password_and_are_deleted(finish):
+    app = QApplication.instance() or QApplication([])
+    window = SageWindow(camera_controls=False)
+    original_exec = LoginDialog.exec
+    dialogs, cleared = [], []
+
+    def run(dialog):
+        dialogs.append(dialog)
+        def dismiss():
+            dialog.password_input.setText("synthetic unsent password")
+            if finish == "accept":
+                dialog.user_id, dialog.user_name, dialog.user_role = 7, "Staff", "boss_admin"
+                dialog.accept()
+            elif finish == "escape":
+                QTest.keyClick(dialog, Qt.Key.Key_Escape)
+            elif finish == "close":
+                dialog.close()
+            else:
+                dialog.cancel_button.click()
+            cleared.append(dialog.password_input.text() == "")
+        QTimer.singleShot(0, dismiss)
+        return original_exec(dialog)
+
+    try:
+        with patch.object(LoginDialog, "exec", run):
+            for _ in range(3):
+                window.handle_mode_button()
+                app.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+                assert not window.findChildren(LoginDialog)
+                assert not isValid(dialogs[-1])
+                if finish == "accept":
+                    assert window.session_state.user_id == 7
+                    assert window.session_state.user_name == "Staff"
+                    window.handle_mode_button()  # Log out before the next visit.
+                else:
+                    assert window.session_state.user_id is None
+        assert cleared == [True] * 3
+    finally:
+        window.close()
+
+
+@pytest.mark.parametrize("role", [role for role, _ in ROLES])
+@pytest.mark.parametrize("finish", ["cancel", "escape", "close", "accept"])
+def test_repeated_account_dialogs_clear_all_password_fields_and_are_deleted(role, finish):
+    app = QApplication.instance() or QApplication([])
+    window = SageWindow(camera_controls=False)
+    window.session_state = window.session_service.log_in(7, "Staff", role)
+    original_exec = AccountManagementDialog.exec
+    dialogs, cleared = [], []
+
+    def run(dialog):
+        dialogs.append(dialog)
+        def dismiss():
+            fields = [field for field in dialog.findChildren(QLineEdit)
+                      if field.echoMode() == QLineEdit.EchoMode.Password]
+            for field in fields:
+                field.setText("synthetic unsent password")
+            if finish == "accept":
+                dialog.accept()
+            elif finish == "escape":
+                QTest.keyClick(dialog, Qt.Key.Key_Escape)
+            elif finish == "close":
+                dialog.close()
+            else:
+                dialog.close_button.click()
+            cleared.append(bool(fields) and all(field.text() == "" for field in fields))
+        QTimer.singleShot(0, dismiss)
+        return original_exec(dialog)
+
+    try:
+        # Form/lifetime test only; worker permissions and cleanup have separate coverage.
+        with patch.object(AccountManagementDialog, "_start_operation"), patch.object(
+            AccountManagementDialog, "exec", run
+        ):
+            for _ in range(3):
+                window.open_account_management()
+                app.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+                assert not window.findChildren(AccountManagementDialog)
+                assert not isValid(dialogs[-1])
+        assert cleared == [True] * 3
+    finally:
+        window.close()
 
 
 class TestLoginWorkflow(unittest.TestCase):

@@ -15,7 +15,7 @@ from PySide6.QtWidgets import QApplication, QWidget
 if __name__ == "__main__" and __package__ is None:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from TouchControls.camera_manager import DEFAULT_MODEL_PATH
+from TouchControls.paths import DEFAULT_MODEL_PATH
 from TouchControls.camera_worker import CameraWorker
 from TouchControls.calibration import (
     Calibration, DEFAULT_CALIBRATION_PATH, check_points, fit_mapping, project, target_points,

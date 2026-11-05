@@ -196,6 +196,13 @@ class LoginDialog(QDialog):
         else:
             self.error_label.setText("Could not complete login. Try again.")
 
+    def done(self, result):
+        # Covers acceptance, cancellation, Escape, and native window closure.
+        if self._thread is not None:
+            return
+        self.password_input.clear()
+        super().done(result)
+
     def reject(self):
         # Keep the dialog alive until an active worker has stopped.
         if self._thread is None:

@@ -14,10 +14,9 @@ if __name__ == "__main__" and __package__ is None:
     import sys
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from services.gcode_preview_service import (
-    GcodePreviewService, NoPreviewableMovementError, UnreadableGcodeError,
-)
+from services.gcode_preview_service import GcodePreviewService
 from TouchControls.widgets import scroll_controls
+from services.gcode_preview_worker import PreviewLoader
 
 # Folder containing the G-code files available for printing.
 GCODE_DIR = Path(
@@ -38,6 +37,10 @@ class GcodeDisplayPrintApp(QWidget):
         self.gcode_dir = Path(gcode_dir) if gcode_dir is not None else GCODE_DIR
         cache_dir = thumbnail_dir if thumbnail_dir is not None else THUMB_DIR
         self.preview_service = GcodePreviewService(cache_dir)
+        self.preview_loader = PreviewLoader(self)
+        self.preview_loader.completed.connect(self._preview_completed)
+        self._preview_request = 0
+        self._preview_path = None
 
         # Set the title shown when the app is opened as a separate window.
         self.setWindowTitle("SAGE - 3D Printing")
@@ -224,11 +227,23 @@ class GcodeDisplayPrintApp(QWidget):
 
     # Return to the owning home screen before this window closes.
     def closeEvent(self, event):
+        self.preview_loader.cancel()
         self.home_requested.emit()
         super().closeEvent(event)
 
+    def hideEvent(self, event):
+        self.preview_loader.cancel()
+        super().hideEvent(event)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self._preview_path is not None and self.preview_label.text() == "Loading preview…":
+            self.display_gcode_preview(self._preview_path)
+
     # Find the G-code files and show the first filename in the interface.
     def load_gcode_files(self):
+        self.preview_loader.cancel()
+        self._preview_path = None
         try:
             # Check that the configured path points to an existing folder.
             if not self.gcode_dir.is_dir():
@@ -370,15 +385,19 @@ class GcodeDisplayPrintApp(QWidget):
 
     # Translate preview outcomes into the image or message shown to the user.
     def display_gcode_preview(self, file_path):
-        self.preview_label.clear()
-        try:
-            image = self.preview_service.get_preview(file_path)
-        except UnreadableGcodeError:
-            self.preview_label.setText("Unable to read this G-code file.")
-        except NoPreviewableMovementError:
-            self.preview_label.setText("No previewable movement found.")
+        self._preview_path = file_path
+        self.preview_label.setText("Loading preview…")
+        self._preview_request = self.preview_loader.submit(self.preview_service, file_path)
+
+    def _preview_completed(self, request, result):
+        if request != self._preview_request:
+            return
+        if isinstance(result, str):
+            self.preview_label.setText(result)
+        elif result is None:
+            return
         else:
-            self.show_preview_image(image)
+            self.show_preview_image(result)
 
     # Fit either a saved or newly generated image into the preview area.
     def show_preview_image(self, image):

@@ -83,3 +83,31 @@ def test_invalid_saved_files_are_rejected(tmp_path, change):
     path.write_text(json.dumps(payload), encoding="utf-8")
     with pytest.raises(ValueError):
         Calibration.load(path)
+
+
+@pytest.mark.parametrize("change", [
+    {"matrix": [[1, 0, 0], [2, 0, 0], [0, 0, 1]]},
+    {"matrix": [[1, 0], [0, 1]]},
+    {"matrix": [[float("nan"), 0, 0], [0, 1, 0], [0, 0, 1]]},
+    {"matrix": [[1, 0, 50], [0, 1, 0], [0, 0, 1]]},
+    {"camera_points": [[10, 10]] * 4},
+    {"camera_points": [[0, 0], [100, 100], [100, 0], [0, 100]]},
+    {"camera_points": [[0, 0], [100, 0], [10, 10], [0, 100]]},
+    {"camera_points": [[0, 0], [float("inf"), 0], [100, 100], [0, 100]]},
+])
+def test_lightweight_validation_rejects_corrupt_matrix_and_corners(change):
+    calibration = valid_calibration()
+    for name, value in change.items():
+        setattr(calibration, name, value)
+    with pytest.raises(ValueError):
+        calibration.validate()
+
+
+def test_lightweight_projection_matches_numpy_for_perspective_points():
+    calibration = valid_calibration()
+    calibration.validate()
+    matrix = np.asarray(calibration.matrix)
+    for x in range(80, 561, 40):
+        for y in range(80, 421, 40):
+            expected = matrix @ np.array([x, y, 1.0])
+            assert project(calibration.matrix, (x, y)) == pytest.approx(expected[:2] / expected[2])

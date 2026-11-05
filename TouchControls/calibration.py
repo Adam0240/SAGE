@@ -7,10 +7,6 @@ import os
 from pathlib import Path
 import tempfile
 
-import cv2
-import numpy as np
-
-
 DEFAULT_CALIBRATION_PATH = Path(__file__).resolve().parent / "calibration.json"
 
 
@@ -27,13 +23,46 @@ def check_points(width, height):
 
 
 def project(matrix, point):
-    values = np.asarray(matrix, dtype=float) @ np.array([*point, 1.0])
-    if not np.all(np.isfinite(values)) or abs(values[2]) < 1e-10:
+    matrix = _finite_rows(matrix, 3, 3, "Invalid calibration matrix.")
+    x, y = _finite_rows([point], 1, 2, "Invalid camera point.")[0]
+    values = [row[0] * x + row[1] * y + row[2] for row in matrix]
+    if not all(math.isfinite(value) for value in values) or abs(values[2]) < 1e-10:
         raise ValueError("Point cannot be mapped with this calibration.")
-    return tuple(float(value) for value in values[:2] / values[2])
+    return values[0] / values[2], values[1] / values[2]
+
+
+def _finite_rows(values, rows, columns, message):
+    try:
+        result = [[float(value) for value in row] for row in values]
+        if (len(result) != rows or any(len(row) != columns for row in result)
+                or any(not math.isfinite(value) for row in result for value in row)):
+            raise ValueError(message)
+        return result
+    except (TypeError, ValueError, OverflowError) as error:
+        raise ValueError(message) from error
+
+
+def _validate_corners(points):
+    points = _finite_rows(points, 4, 2, "Calibration requires four finite coordinate pairs.")
+    turns = []
+    area = 0
+    for index, (x, y) in enumerate(points):
+        nx, ny = points[(index + 1) % 4]
+        tx, ty = points[(index + 2) % 4]
+        area += x * ny - y * nx
+        turns.append((nx - x) * (ty - ny) - (ny - y) * (tx - nx))
+    if (not math.isfinite(area) or abs(area) < 200
+            or not (all(turn > 0 for turn in turns) or all(turn < 0 for turn in turns))):
+        raise ValueError("Targets are too close together or out of order. Press R to retry.")
+    return points
 
 
 def fit_mapping(camera_points, screen_points):
+    # Only the calibration tool fits a new matrix. Loading and using an existing
+    # calibration in SAGE must not import native vision libraries on the GUI thread.
+    import cv2
+    import numpy as np
+
     source = np.asarray(camera_points, dtype=np.float32)
     destination = np.asarray(screen_points, dtype=np.float32)
     for points in (source, destination):
@@ -67,14 +96,22 @@ class Calibration:
             raise ValueError("Invalid camera or display dimensions.")
         if not math.isfinite(self.device_pixel_ratio) or self.device_pixel_ratio <= 0:
             raise ValueError("Invalid display scaling.")
-        matrix = np.asarray(self.matrix, dtype=float)
-        if (matrix.shape != (3, 3) or not np.all(np.isfinite(matrix))
-                or np.linalg.matrix_rank(matrix) != 3):
+        matrix = _finite_rows(self.matrix, 3, 3, "Invalid calibration matrix.")
+        # Row normalization keeps the determinant check independent of row scale.
+        if any(not any(row) for row in matrix):
+            raise ValueError("Invalid calibration matrix.")
+        a, b, c = [[value / max(abs(v) for v in row) for value in row] for row in matrix]
+        determinant = (a[0] * (b[1] * c[2] - b[2] * c[1])
+                       - a[1] * (b[0] * c[2] - b[2] * c[0])
+                       + a[2] * (b[0] * c[1] - b[1] * c[0]))
+        if abs(determinant) < 1e-15:
             raise ValueError("Invalid calibration matrix.")
         width, height = self.display_geometry[2:]
-        expected = fit_mapping(self.camera_points, target_points(width, height))
-        for point in self.camera_points:
-            if not np.allclose(project(matrix, point), project(expected, point), atol=0.1):
+        source = _validate_corners(self.camera_points)
+        destination = _validate_corners(target_points(width, height))
+        for point, expected in zip(source, destination):
+            if any(abs(actual - target) > 0.1 + 1e-5 * abs(target)
+                   for actual, target in zip(project(matrix, point), expected)):
                 raise ValueError("Calibration matrix does not match the captured points.")
         if (not math.isfinite(self.max_error) or self.max_error <= 0
                 or len(self.verification_errors) != 5

@@ -225,15 +225,19 @@ class SageWindow(QWidget):
         # Student Mode opens the administrator login dialog.
         dialog = LoginDialog(self)
 
-        result = dialog.exec()
-        if result == LoginDialog.DialogCode.Accepted:
-            self.session_state = self.session_service.log_in(
-                user_id=dialog.user_id,
-                user_name=dialog.user_name,
-                role=dialog.user_role,
-            )
-            self.mode_button.setText(self.session_state.button_label)
-            self.app_buttons[0].setEnabled(True)
+        try:
+            result = dialog.exec()
+            if result == LoginDialog.DialogCode.Accepted:
+                self.session_state = self.session_service.log_in(
+                    user_id=dialog.user_id,
+                    user_name=dialog.user_name,
+                    role=dialog.user_role,
+                )
+                self.mode_button.setText(self.session_state.button_label)
+                self.app_buttons[0].setEnabled(True)
+        finally:
+            # Copy accepted identity before releasing the modal dialog.
+            dialog.deleteLater()
 
     def open_account_management(self):
         # Account management is available only during a staff session.
@@ -245,7 +249,10 @@ class SageWindow(QWidget):
             actor_role=self.session_state.mode,
             parent=self,
         )
-        dialog.exec()
+        try:
+            dialog.exec()
+        finally:
+            dialog.deleteLater()
 
     # Reuse the viewer so returning home does not discard the selected file.
     def open_gcode_app(self):

@@ -3,7 +3,15 @@
 import re
 
 
-def read_gcode_coordinates(file_path):
+class PreviewCancelled(Exception):
+    """The user left this preview request."""
+
+
+class GcodeTooLargeError(Exception):
+    """The preview would exceed its coordinate budget."""
+
+
+def read_gcode_coordinates(file_path, *, cancel_event=None, max_coordinates=None):
     coordinates = []
     x = y = 0.0
 
@@ -19,6 +27,8 @@ def read_gcode_coordinates(file_path):
     # Read one line at a time instead of loading the entire file into memory.
     with file_path.open(encoding="utf-8-sig") as gcode_file:
         for line in gcode_file:
+            if cancel_event is not None and cancel_event.is_set():
+                raise PreviewCancelled
             # Remove semicolon comments and allow lowercase or indented commands.
             command = line.split(";", 1)[0].strip().upper()
 
@@ -40,5 +50,7 @@ def read_gcode_coordinates(file_path):
                     y = float(value)
 
             coordinates.append((x, y))
+            if max_coordinates is not None and len(coordinates) > max_coordinates:
+                raise GcodeTooLargeError
 
     return coordinates

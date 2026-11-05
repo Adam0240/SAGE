@@ -1,8 +1,16 @@
-# Camera tracking and standalone calibration
+# Camera controls, setup, and calibration
 
-This standalone component tracks one index fingertip in the webcam image. It does
-not calibrate the desk, detect surface contact, click buttons, or connect to SAGE's
-UI yet. A projector is not required for this preview.
+SAGE tracks one index fingertip and activates an enabled control after a one-second
+hover. The shared input controller follows Home, SAGE apps, and their owned dialogs.
+This is hover-based input, not physical contact detection. Windows duplicate-display
+mode shares the screen with the projector; SAGE does not detect projector connection.
+
+For a new device, install dependencies, download the model, optionally check tracking
+with the standalone preview, then calibrate the desk and close the tool before
+starting SAGE. The model and calibration are excluded from Git. The model is reusable;
+calibration belongs to the physical camera/projector/display setup.
+
+## Install dependencies and the model
 
 From the SAGE repository root, install the dependencies:
 
@@ -18,9 +26,14 @@ Invoke-WebRequest -Uri 'https://storage.googleapis.com/mediapipe-models/hand_lan
 ```
 
 Model source: [MediaPipe Hand Landmarker](https://ai.google.dev/edge/mediapipe/solutions/vision/hand_landmarker).
-The downloaded model is excluded from Git. Use `--model PATH` for another local copy.
+The preview and calibration tools accept `--model PATH` for another local copy.
+Integrated SAGE uses `TouchControls/models/hand_landmarker.task`, so keep a model at
+that default path when running the main application.
 
-Run the preview:
+## Check tracking with the standalone preview
+
+The preview only shows tracking in camera coordinates; it does not activate SAGE
+controls or require a projector. Run it with:
 
 ```powershell
 .\.venv\Scripts\python.exe -m TouchControls.camera_manager
@@ -33,27 +46,14 @@ to release the camera. On camera failure the preview exits with an error instead
 of continuing to use an old fingertip position. Close other camera applications
 and check Windows camera permissions if the camera cannot open.
 
-## Interface for the next milestone
-
-`CameraManager(camera_index=0, model_path=...)` opens the camera and local model.
-Call `update()` to process a frame, then read `frame`, `tracking_available`, and
-`index_fingertip` (a floating-point `(x, y)` pair or `None`). A successful update
-without a hand returns `True`; acquisition/inference failure returns `False` with
-`last_error`. Use a context manager or call `release()` when finished.
-
-Processing is synchronous to keep each result paired with its frame. When this is
-integrated into Qt, create and use the manager in a worker thread, not the GUI
-thread. SAGE and the standalone Qt calibration tool use a separate camera process
-supervised by a Qt timer, so a blocked native camera call can be stopped safely.
-
-Before moving on, verify on the actual camera that the marker follows your index
+Verify on the actual camera that the marker follows your index
 finger across the image, disappears when your hand leaves, and the camera is
 available again after closing the preview. Automated tests use simulated frames;
 they do not establish physical tracking accuracy.
 
 ## Calibrate the projected desk
 
-Close the camera preview first so the calibration tool can use the webcam. Keep
+Close SAGE and the camera preview first so the calibration tool can use the webcam. Keep
 Windows in duplicate-display mode and leave the camera, projector, desk, display
 resolution, and scaling in their intended operating positions/settings.
 
@@ -76,22 +76,17 @@ full screen on the primary display; Windows duplicates it onto the projector.
 
 The default output is `TouchControls/calibration.json`, excluded from Git because
 it belongs to this physical setup. `--output PATH` selects a different file.
+Integrated SAGE loads the default path; use the default output for normal setup.
 Saving replaces the file only after validation; merely capturing points does not
 overwrite previous calibration. A camera failure disables capture and saving;
 close the tool, fix the camera connection, and run it again.
-
-The file records the mapping, camera index/resolution, display geometry/scaling,
-and accuracy-check errors. `Calibration.load()` validates the file, `map_point()`
-returns screen-local Qt logical coordinates, and `matches_setup()` lets future
-input code check compatibility. Future widget targeting must account for the
-stored display origin and window position; these are not physical display pixels.
 
 Recalibrate if the camera/projector moves, the projection changes, or display
 resolution/scaling changes. Software cannot automatically detect every physical
 movement, so check alignment before reuse. The mapping assumes a flat desk and
 does not detect contact or correct for fingers held substantially above the surface.
 
-Home-screen camera controls load this file when enabled. A successful hardware
+Home loads this file automatically on startup. A successful hardware
 calibration must be performed on your desk; automated tests verify the workflow
 and mathematics with simulated input.
 
@@ -128,17 +123,19 @@ lists; Left/Right scrolls the reference cards. Each activation advances half a p
 and requires departure before repeating. STEAM Guide has an Ask SAGE button.
 Document viewers have Close buttons; login has Cancel and account management has
 Close. Existing busy-operation restrictions still apply when closing staff dialogs.
+The pointer is confined to the active SAGE window's content area. It disappears
+outside a modal dialog and over its native Windows title bar; use the internal
+Close/Cancel button instead of the title-bar X. Underlying windows remain inactive
+until the modal dialog closes.
 
 Opening/closing windows or changing tabs resets pending dwell.
 Another full dwell is required on the newly active screen. Camera activation pauses
 when an external application has focus; the system mouse is never moved. Closing
-SAGE requests camera cleanup before closing the window. The camera has 0.75 seconds
-to stop normally before its process is terminated, with a kill fallback after another
-0.5 seconds. The UI remains responsive during normal window closure. Startup times
-out after 30 seconds; a running camera that produces no observations for 5 seconds
-is stopped with an error. Application exit has a bounded cleanup fallback when Qt
-timers can no longer run. Verify unplugging/reconnecting and closing on your webcam;
-automated tests simulate blocked capture in real child processes.
+SAGE requests camera cleanup before closing the window. Capture runs in a supervised
+process so stalled camera calls can be stopped while the UI remains responsive.
+Startup times out after 30 seconds; a running camera that produces no observations
+for 5 seconds is stopped with an error. Verify unplugging/reconnecting and closing
+on your webcam; automated tests simulate blocked capture in child processes.
 
 Hardware checks (the automated suite simulates camera input):
 

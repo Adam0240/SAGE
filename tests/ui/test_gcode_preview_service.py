@@ -15,6 +15,26 @@ from services.gcode_preview_service import (
 
 
 class TestGcodePreviewService(unittest.TestCase):
+    # Coordinate limits fail explicitly rather than rendering a misleading partial path.
+    def test_coordinate_budget_does_not_write_partial_cache(self):
+        from services.gcode_parser import GcodeTooLargeError
+        path = self.write_gcode(content="G1 X0 Y0\nG1 X1 Y1\nG1 X2 Y2\n")
+        with patch.object(self.service, "MAX_COORDINATES", 2):
+            with self.assertRaises(GcodeTooLargeError):
+                self.service.get_preview(path)
+        self.assertEqual(list(self.thumb_dir.glob("*.png")), [])
+
+    # Cancelling during parsing stops promptly and does not cache an incomplete preview.
+    def test_cancel_during_parsing(self):
+        from unittest.mock import Mock
+        from services.gcode_parser import PreviewCancelled
+        path = self.write_gcode(content="G1 X0 Y0\nG1 X1 Y1\nG1 X2 Y2\n")
+        cancelled = Mock()
+        cancelled.is_set.side_effect = [False, False, True]
+        with self.assertRaises(PreviewCancelled):
+            self.service.get_preview(path, cancel_event=cancelled)
+        self.assertEqual(list(self.thumb_dir.glob("*.png")), [])
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -60,7 +80,7 @@ class TestGcodePreviewService(unittest.TestCase):
         with patch("services.gcode_preview_service.read_gcode_coordinates",
                           wraps=read_gcode_coordinates) as read:
             image = self.service.get_preview(file_path)
-            read.assert_called_once_with(file_path)
+            read.assert_called_once_with(file_path, cancel_event=None, max_coordinates=self.service.MAX_COORDINATES)
         other = self.root / "model.gcode"
         other.write_bytes(file_path.read_bytes())
         image = self.service.get_preview(other)
@@ -75,7 +95,7 @@ class TestGcodePreviewService(unittest.TestCase):
         with patch("services.gcode_preview_service.read_gcode_coordinates",
                           wraps=read_gcode_coordinates) as read:
             image = self.service.get_preview(file_path)
-            read.assert_called_once_with(file_path)
+            read.assert_called_once_with(file_path, cancel_event=None, max_coordinates=self.service.MAX_COORDINATES)
         self.assertFalse(QImage(str(preview_path)).isNull())
 
     # Tests preview generation still works when the thumbnail directory cannot be created.
@@ -112,7 +132,7 @@ class TestGcodePreviewService(unittest.TestCase):
         with patch("services.gcode_preview_service.read_gcode_coordinates",
                    wraps=read_gcode_coordinates) as read:
             self.service.get_preview(file_path)
-            read.assert_called_once_with(file_path)
+            read.assert_called_once_with(file_path, cancel_event=None, max_coordinates=self.service.MAX_COORDINATES)
         self.assertEqual(len(list(self.thumb_dir.glob("*.png"))), 2)
 
     # Tests file access, decoding, and parsing failures become the defined unreadable-file error.

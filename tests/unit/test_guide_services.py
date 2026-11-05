@@ -112,6 +112,68 @@ def test_parent_cautions_are_included_in_response(tmp_path):
     assert "Stop the job." in response.markdown
 
 
+@pytest.mark.parametrize("second_caution", ["Second setup caution.", ""])
+def test_repeated_parent_headings_keep_only_their_own_guidance(second_caution):
+    text = ("# Guide\nShared guidance.\n## Setup\nFirst setup caution.\n"
+            "### Procedure\nFirst procedure.\n## Setup\n" + second_caution +
+            "\n### Procedure\nSecond procedure.")
+    sections = parse_sections("guide.md", text)
+    procedures = [section for section in sections if section.headings == ("Setup", "Procedure")]
+    assert procedures[0].context == "Shared guidance.\n\nFirst setup caution."
+    assert procedures[1].context == "Shared guidance." + (
+        "\n\n" + second_caution if second_caution else "")
+    assert procedures[0].identifier != procedures[1].identifier
+    edited = parse_sections("guide.md", text.replace("Second procedure.", "Edited procedure."))
+    assert edited[-1].identifier == procedures[1].identifier
+
+
+def test_nested_repeated_headings_and_skipped_levels_preserve_ancestor_order():
+    sections = parse_sections("guide.md", """# Guide
+Root caution.
+## Setup
+Outer caution.
+#### Setup
+Inner caution.
+###### Action
+First instructions.
+#### Setup
+###### Action
+Second instructions.
+## Other
+### Action
+Third instructions.
+""")
+    actions = [section for section in sections if section.headings[-1:] == ("Action",)]
+    assert [section.context for section in actions] == [
+        "Root caution.\n\nOuter caution.\n\nInner caution.",
+        "Root caution.\n\nOuter caution.",
+        "Root caution.",
+    ]
+
+
+def test_repeated_document_heading_does_not_reuse_previous_root_guidance():
+    sections = parse_sections("guide.md", "# Guide\nFirst root caution.\n"
+                              "## Task\nFirst instructions.\n# Guide\n"
+                              "Second root caution.\n## Task\nSecond instructions.")
+    tasks = [section for section in sections if section.headings == ("Task",)]
+    assert [section.context for section in tasks] == ["First root caution.", "Second root caution."]
+
+
+@pytest.mark.parametrize("question, own, other", [
+    ("alpha procedure", "First setup caution.", "Second setup caution."),
+    ("beta procedure", "Second setup caution.", "First setup caution."),
+])
+def test_retrieved_response_excludes_other_repeated_parent_guidance(tmp_path, question, own, other):
+    (tmp_path / "guide.md").write_text(
+        "# Guide\n## Setup\nFirst setup caution.\n### Alpha procedure\nAlpha instructions.\n"
+        "## Setup\nSecond setup caution.\n### Beta procedure\nBeta instructions.", encoding="utf-8")
+    result = DocumentRetrievalService(tmp_path).search(question)
+    response = GuideResponseService().respond(question, result)
+    assert response.sources == (result.matches[0].section.source,)
+    assert own in response.markdown
+    assert other not in response.markdown
+
+
 def test_add_edit_and_remove_documents_are_reflected(tmp_path):
     service = DocumentRetrievalService(tmp_path)
     path = tmp_path / "printer.MD"

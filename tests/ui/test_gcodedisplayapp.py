@@ -2,10 +2,12 @@
 
 import tempfile
 import unittest
+import time
+import threading
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import patch, ANY
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer, QThread, QEvent
 from PySide6.QtGui import QColor, QImage
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog, QDialogButtonBox, QListWidget, QLineEdit, QLabel
@@ -27,7 +29,7 @@ class TestGcodeDisplayApp(unittest.TestCase):
         self.thumb_dir = self.root / "thumbnails"
         self.window = gcode_app.GcodeDisplayPrintApp(
             gcode_dir=self.gcode_dir, thumbnail_dir=self.thumb_dir)
-        self.addCleanup(self.window.close)
+        self.addCleanup(self.close_window, self.window)
 
     def write_gcode(self, name="model.gcode", content="G1 X0 Y0\nG1 X10 Y10\n"):
         file_path = self.gcode_dir / name
@@ -40,7 +42,140 @@ class TestGcodeDisplayApp(unittest.TestCase):
         self.window = gcode_app.GcodeDisplayPrintApp(
             gcode_dir=self.gcode_dir if gcode_dir is None else gcode_dir,
             thumbnail_dir=self.thumb_dir)
-        self.addCleanup(self.window.close)
+        self.addCleanup(self.close_window, self.window)
+        self.wait_for_preview()
+
+    def wait_for_preview(self):
+        deadline = time.monotonic() + 5
+        while self.window.preview_loader.busy and time.monotonic() < deadline:
+            self.app.processEvents()
+            QTest.qWait(5)
+        self.app.processEvents()
+        self.assertFalse(self.window.preview_loader.busy)
+
+    def close_window(self, window):
+        window.close()
+        thread = window.preview_loader.thread
+        if thread is not None:
+            thread.join(timeout=5)
+            self.assertFalse(thread.is_alive())
+        self.app.processEvents()
+
+    # A slow old request cannot freeze timers or overwrite the newest selection.
+    def test_slow_preview_keeps_ui_responsive_and_coalesces_navigation(self):
+        paths = [self.write_gcode(name) for name in ("a.gcode", "b.gcode", "c.gcode")]
+        self.load_files()
+        started, release = threading.Event(), threading.Event()
+        calls, threads, ticks = [], [], []
+        timer = QTimer()
+        timer.setInterval(5)
+        timer.timeout.connect(lambda: ticks.append(True))
+        image = QImage(20, 20, QImage.Format.Format_RGB32)
+        image.fill(QColor("green"))
+
+        def slow_preview(path, **kwargs):
+            calls.append(path)
+            threads.append(QThread.currentThread())
+            if path == paths[0]:
+                started.set()
+                release.wait(5)
+                raise RuntimeError("obsolete failure")
+            return image
+
+        try:
+            with patch.object(self.window.preview_service, "get_preview", side_effect=slow_preview):
+                self.window.display_gcode_preview(paths[0])
+                self.assertTrue(started.wait(2))
+                timer.start()
+                self.window.next_button.click()
+                self.window.next_button.click()
+                QTest.qWait(60)
+                self.assertGreater(len(ticks), 2)
+                self.assertEqual(self.window.filename_label.text(), "c.gcode")
+                self.assertEqual(self.window.preview_label.text(), "Loading preview…")
+                release.set()
+                self.wait_for_preview()
+                self.assertEqual(calls, [paths[0], paths[2]])
+                self.assertTrue(all(thread != self.app.thread() for thread in threads))
+                self.assertEqual(self.window.preview_label.text(), "")
+                self.assertEqual(self.window.preview_label.pixmap().toImage().pixelColor(0, 0), QColor("green"))
+        finally:
+            timer.stop()
+            release.set()
+            self.wait_for_preview()
+
+    # Home remains usable during blocked I/O; returning retries an interrupted preview.
+    def test_close_during_preview_and_reopen(self):
+        path = self.write_gcode()
+        self.load_files()
+        self.window.show()
+        started, release = threading.Event(), threading.Event()
+        original = self.window.preview_service.get_preview
+        visits = []
+        self.window.home_requested.connect(lambda: visits.append(True))
+
+        def slow_preview(path, **kwargs):
+            started.set()
+            release.wait(5)
+            return original(path, **kwargs)
+
+        try:
+            with patch.object(self.window.preview_service, "get_preview", side_effect=slow_preview):
+                self.window.display_gcode_preview(path)
+                self.assertTrue(started.wait(2))
+                before = time.monotonic()
+                self.window.home_button.click()
+                self.assertLess(time.monotonic() - before, 0.5)
+                self.assertFalse(self.window.isVisible())
+                self.assertTrue(visits)
+                self.assertTrue(self.window.preview_loader.cancelled.is_set())
+                release.set()
+                self.wait_for_preview()
+            self.window.show()
+            self.wait_for_preview()
+            self.assertFalse(self.window.preview_label.pixmap().isNull())
+        finally:
+            release.set()
+            self.wait_for_preview()
+
+    # Native widget deletion cannot leave a worker trying to call a deleted Qt object.
+    def test_destroy_during_preview_cancels_without_waiting(self):
+        window = gcode_app.GcodeDisplayPrintApp(gcode_dir=self.gcode_dir, thumbnail_dir=self.thumb_dir)
+        started, release = threading.Event(), threading.Event()
+        flags = []
+        def slow_preview(path, *, cancel_event):
+            flags.append(cancel_event)
+            started.set()
+            release.wait(5)
+            return QImage()
+        thread = None
+        try:
+            with patch.object(window.preview_service, "get_preview", side_effect=slow_preview):
+                window.display_gcode_preview(self.gcode_dir / "unused.gcode")
+                self.assertTrue(started.wait(2))
+                thread = window.preview_loader.thread
+                window.deleteLater()
+                self.app.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+                self.assertTrue(flags[0].is_set())
+                release.set()
+                thread.join(timeout=2)
+                self.assertFalse(thread.is_alive())
+                self.app.processEvents()
+        finally:
+            release.set()
+            if thread is not None:
+                thread.join(timeout=5)
+
+    # Unexpected service errors are recoverable and never expose exception details.
+    def test_unexpected_preview_failure_allows_retry(self):
+        path = self.write_gcode()
+        with patch.object(self.window.preview_service, "get_preview", side_effect=RuntimeError("private detail")):
+            self.window.display_gcode_preview(path)
+            self.wait_for_preview()
+        self.assertEqual(self.window.preview_label.text(), "Unable to generate this G-code preview.")
+        self.window.display_gcode_preview(path)
+        self.wait_for_preview()
+        self.assertFalse(self.window.preview_label.pixmap().isNull())
 
     # Tests an empty folder displays guidance, disables navigation, and keeps printing unavailable.
     def test_empty_folder_startup(self):
@@ -150,10 +285,12 @@ class TestGcodeDisplayApp(unittest.TestCase):
             with self.subTest(file=file_path.name):
                 self.window.display_gcode_preview(valid_file)
                 self.window.display_gcode_preview(file_path)
+                self.wait_for_preview()
                 self.assertEqual(self.window.preview_label.text(), "Unable to read this G-code file.")
                 self.assertTrue(self.window.preview_label.pixmap().isNull())
         with patch("services.gcode_preview_service.read_gcode_coordinates", side_effect=ValueError("Invalid value")):
             self.window.display_gcode_preview(self.gcode_dir / "uncached.gcode")
+            self.wait_for_preview()
         self.assertEqual(self.window.preview_label.text(), "Unable to read this G-code file.")
 
     # Tests files with fewer than two positions show guidance and remove the previous preview.
@@ -164,6 +301,7 @@ class TestGcodeDisplayApp(unittest.TestCase):
                 self.window.display_gcode_preview(valid_file)
                 file_path = self.write_gcode("short.gcode", content)
                 self.window.display_gcode_preview(file_path)
+                self.wait_for_preview()
                 self.assertEqual(self.window.preview_label.text(), "No previewable movement found.")
                 self.assertTrue(self.window.preview_label.pixmap().isNull())
 
@@ -185,7 +323,7 @@ class TestGcodeDisplayApp(unittest.TestCase):
         with patch.object(gcode_app, "GCODE_DIR", self.gcode_dir), \
                 patch.object(gcode_app, "THUMB_DIR", self.thumb_dir):
             window = gcode_app.GcodeDisplayPrintApp()
-            self.addCleanup(window.close)
+            self.addCleanup(self.close_window, window)
         self.assertEqual(window.gcode_dir, self.gcode_dir)
         self.assertEqual(window.preview_service.thumbnail_dir, self.thumb_dir)
 
@@ -197,7 +335,8 @@ class TestGcodeDisplayApp(unittest.TestCase):
         self.window.preview_label.setText("Earlier error")
         with patch.object(self.window.preview_service, "get_preview", return_value=image) as preview:
             self.window.display_gcode_preview(file_path)
-            preview.assert_called_once_with(file_path)
+            self.wait_for_preview()
+            preview.assert_called_once_with(file_path, cancel_event=ANY)
         self.assertEqual(self.window.preview_label.text(), "")
         self.assertFalse(self.window.preview_label.pixmap().isNull())
 
@@ -206,6 +345,7 @@ class TestGcodeDisplayApp(unittest.TestCase):
         files = [self.write_gcode(name) for name in ("a.gcode", "b.gcode", "c.gcode")]
         self.load_files()
         self.window.show_previous_file()
+        self.wait_for_preview()
         self.assertTrue(self.window.file_list_button.isEnabled())
 
         def choose_file(dialog):
@@ -222,7 +362,8 @@ class TestGcodeDisplayApp(unittest.TestCase):
                 patch.object(self.window.preview_service, "get_preview",
                              wraps=self.window.preview_service.get_preview) as preview:
             self.window.file_list_button.click()
-            preview.assert_called_once_with(files[1])
+            self.wait_for_preview()
+            preview.assert_called_once_with(files[1], cancel_event=ANY)
         self.assertEqual(self.window.current_file_index, 1)
         self.assertEqual(self.window.filename_label.text(), "b.gcode")
         self.assertFalse(self.window.preview_label.pixmap().isNull())
@@ -292,6 +433,7 @@ class TestGcodeDisplayApp(unittest.TestCase):
 
         with patch.object(QDialog, "exec", new=choose_deleted):
             self.window.file_list_button.click()
+            self.wait_for_preview()
         self.assertEqual(self.window.filename_label.text(), "b.gcode")
         self.assertEqual(self.window.preview_label.text(), "Unable to read this G-code file.")
         self.assertTrue(self.window.preview_label.pixmap().isNull())
@@ -319,7 +461,8 @@ class TestGcodeDisplayApp(unittest.TestCase):
                 patch.object(self.window.preview_service, "get_preview",
                              wraps=self.window.preview_service.get_preview) as preview:
             self.window.show_file_list()
-            preview.assert_called_once_with(matching_file)
+            self.wait_for_preview()
+            preview.assert_called_once_with(matching_file, cancel_event=ANY)
         self.assertEqual(self.window.current_file_index, 1)
         self.assertEqual(self.window.filename_label.text(), matching_file.name)
 

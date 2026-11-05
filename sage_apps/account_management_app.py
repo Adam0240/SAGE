@@ -496,6 +496,15 @@ class AccountManagementDialog(QDialog):
                 target_id=account[0],
             )
 
+    def done(self, result):
+        if self._thread is not None:
+            return
+        # Different staff roles expose different password forms.
+        for field in self.findChildren(QLineEdit):
+            if field.echoMode() == QLineEdit.EchoMode.Password:
+                field.clear()
+        super().done(result)
+
     def reject(self):
         # Keep the dialog alive while a database worker is running.
         if self._thread is None:
