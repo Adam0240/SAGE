@@ -9,3 +9,5 @@ __pycache__/
 /TouchControls/models/*.task
 /TouchControls/calibration.json
 /TouchControls/calibration.json.*.tmp
+
+.pytest_cache/

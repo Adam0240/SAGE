@@ -58,7 +58,7 @@ class SageWindow(QWidget):
 
         title = QLabel("STEAM Artificial Guidance Expert")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title.setStyleSheet("font-size: 36px; font-weight: bold;")
+        title.setStyleSheet("color: white; font-size: 36px; font-weight: bold;")
         header_layout.addWidget(title, stretch=1)
 
         # Display Student Mode by default.
