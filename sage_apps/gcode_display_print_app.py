@@ -1,5 +1,6 @@
 # Provides the base widget used to build the G-code display and printing app.
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
+import time
 from pathlib import Path
 from PySide6.QtWidgets import (
     QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
@@ -17,16 +18,23 @@ if __name__ == "__main__" and __package__ is None:
 from services.gcode_preview_service import GcodePreviewService
 from TouchControls.widgets import scroll_controls
 from services.gcode_preview_worker import PreviewLoader
+from services.printer_status_service import PrinterStatusService
+from services.octoprint_file_service import OctoPrintFileService
+from services.octoprint_print_service import OctoPrintPrintService
+from sage_apps.octoprint_file_dialog import OctoPrintFileDialog
 
-# Folder containing the G-code files available for printing.
-GCODE_DIR = Path(
-    r"C:\Users\STEAM Room\OneDrive - Aiken Technical College\3dPrint_Gcodes"
-)
+# Normal launches browse OctoPrint. A local override supports standalone fixtures.
+GCODE_DIR = None
 THUMB_DIR = Path(__file__).resolve().parent / "thumbnails"
 
 # Creates the screen where users will browse G-code files and start prints.
 class GcodeDisplayPrintApp(QWidget):
+    STATUS_POLL_INTERVAL_MS = 3000
+    STATUS_MAX_AGE_SECONDS = 5
+
     home_requested = Signal()
+    library_changed = Signal()
+    library_status_changed = Signal(str)
 
     def __init__(self, parent=None, *, gcode_dir=None, thumbnail_dir=None):
         # Set up the QWidget and connect it to a parent widget if one is provided.
@@ -41,6 +49,24 @@ class GcodeDisplayPrintApp(QWidget):
         self.preview_loader.completed.connect(self._preview_completed)
         self._preview_request = 0
         self._preview_path = None
+        self.remote_folders = {"": []}
+        self.current_folder = ""
+        self.selected_remote_file = None
+        self.library_loading = False
+        self.library_message = ""
+        self._file_validated = False
+        self._awaiting_print = False
+        self._manual_status = False
+        self._status_checked_at = 0.0
+        self.print_service = OctoPrintPrintService(self)
+        self.print_service.completed.connect(self._print_completed)
+        self.status_poll_timer = QTimer(self)
+        self.status_poll_timer.setInterval(self.STATUS_POLL_INTERVAL_MS)
+        self.status_poll_timer.timeout.connect(lambda: self.check_printer_status(manual=False))
+        self.file_service = OctoPrintFileService(Path(cache_dir) / "gcodes", self)
+        self.file_service.library_loaded.connect(self._library_loaded)
+        self.file_service.file_ready.connect(self._remote_file_ready)
+        self.file_service.failed.connect(self._remote_failed)
 
         # Set the title shown when the app is opened as a separate window.
         self.setWindowTitle("SAGE - 3D Printing")
@@ -116,6 +142,7 @@ class GcodeDisplayPrintApp(QWidget):
         # Show a placeholder until the G-code files have been loaded.
         # Allow long filenames to wrap so they fit between the buttons.
         self.filename_label = QLabel("No file selected")
+        self.filename_label.setTextFormat(Qt.TextFormat.PlainText)
         self.filename_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.filename_label.setWordWrap(True)
         self.filename_label.setMinimumWidth(0)
@@ -162,11 +189,27 @@ class GcodeDisplayPrintApp(QWidget):
             alignment=Qt.AlignmentFlag.AlignHCenter
         )
 
-        # Create the button that will send the selected file to OctoPrint.
-        # Keep it disabled until the printing functionality is connected.
+        self.printer_status_service = PrinterStatusService(self)
+        self.printer_status_service.completed.connect(self._printer_status_completed)
+        self.printer_status_button = QPushButton("Printer Status")
+        self.printer_status_button.setFixedSize(300, 55)
+        self.printer_status_button.setStyleSheet(
+            "color: white; font-size: 22px; border: 2px solid white; border-radius: 8px;"
+        )
+        self.printer_status_button.clicked.connect(self.check_printer_status)
+        self.main_layout.addWidget(self.printer_status_button,
+                                   alignment=Qt.AlignmentFlag.AlignHCenter)
+        self.printer_status_label = QLabel("Printer status not checked.")
+        self.printer_status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.printer_status_label.setWordWrap(True)
+        self.printer_status_label.setStyleSheet("color: white; font-size: 18px;")
+        self.main_layout.addWidget(self.printer_status_label)
+
+        # Enable only with a validated remote file and a fresh idle status.
         self.start_print_button = QPushButton("Start Print")
         self.start_print_button.setFixedSize(300, 55)
         self.start_print_button.setEnabled(False)
+        self.start_print_button.clicked.connect(self.start_print)
         self.start_print_button.setStyleSheet(
             "QPushButton {"
             "    color: white;"
@@ -185,23 +228,21 @@ class GcodeDisplayPrintApp(QWidget):
             self.start_print_button,
             alignment=Qt.AlignmentFlag.AlignHCenter
         )
+        self.print_message_label = QLabel()
+        self.print_message_label.setWordWrap(True)
+        self.print_message_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.print_message_label.setStyleSheet("color: white; font-size: 18px;")
+        self.print_message_label.hide()
+        self.main_layout.addWidget(self.print_message_label)
 
         # Store the available files and track which one is selected.
         self.gcode_files = []
         self.current_file_index = 0
 
-        # Find the G-code files after the interface has been created.
-        self.load_gcode_files()
-
         # Move backward or forward through the files when an arrow is clicked.
         self.previous_button.clicked.connect(self.show_previous_file)
         self.next_button.clicked.connect(self.show_next_file)
         self.file_list_button.clicked.connect(self.show_file_list)
-        self.file_list_button.setEnabled(bool(self.gcode_files))
-
-        # Navigation is only needed when more than one file is available.
-        self.previous_button.setEnabled(len(self.gcode_files) > 1)
-        self.next_button.setEnabled(len(self.gcode_files) > 1)
 
         # Use the left arrow key to select the previous file.
         self.previous_shortcut = QShortcut(
@@ -221,29 +262,173 @@ class GcodeDisplayPrintApp(QWidget):
         )
         self.next_shortcut.activated.connect(self.show_next_file)
 
-        # Match keyboard navigation to the availability of the arrow buttons.
-        self.previous_shortcut.setEnabled(len(self.gcode_files) > 1)
-        self.next_shortcut.setEnabled(len(self.gcode_files) > 1)
+        # Load only after every control exists; configuration errors may be synchronous.
+        self.load_gcode_files()
+        self._update_navigation()
+
+    def _update_navigation(self):
+        available = (len(self.gcode_files) > 1 and not self.library_loading
+                     and not self.library_message and not self.print_service.busy)
+        for control in (self.previous_button, self.next_button, self.previous_shortcut, self.next_shortcut):
+            control.setEnabled(available)
+        self.file_list_button.setEnabled(
+            not self.print_service.busy and (self.gcode_dir is None or bool(self.gcode_files)))
+        self._update_print_button()
+
+    def _update_print_button(self):
+        status = self.printer_status_service
+        file_available = (
+            self.gcode_dir is None and self.selected_remote_file is not None
+            and self._file_validated and not self.library_loading and not self.library_message
+        )
+        printer_ready = (
+            status.reply is None and status.status.ready
+            and status.source == self.file_service.library_source
+            and time.monotonic() - self._status_checked_at < self.STATUS_MAX_AGE_SECONDS
+        )
+        self.start_print_button.setEnabled(bool(
+            file_available and printer_ready and not self.print_service.busy and not self._awaiting_print
+        ))
+
+    def _library_loaded(self, folders):
+        self.library_loading = False
+        self.library_message = ""
+        self.remote_folders = folders
+        if self.current_folder not in folders:
+            self.current_folder = ""
+        self.gcode_files = [entry for entry in folders[self.current_folder] if not entry.is_folder]
+        if self.selected_remote_file in self.gcode_files:
+            self.current_file_index = self.gcode_files.index(self.selected_remote_file)
+        else:
+            self.current_file_index = 0
+            self.selected_remote_file = None
+        if self.gcode_files:
+            self.update_selected_file()
+        else:
+            self.filename_label.setText("No file selected")
+            self.preview_label.setText("Open View File List to browse OctoPrint folders.")
+        self._update_navigation()
+        self.library_changed.emit()
+
+    def _remote_file_ready(self, entry, path):
+        if entry == self.selected_remote_file:
+            self._file_validated = True
+            self._update_print_button()
+            self.display_gcode_preview(path)
+
+    def _remote_failed(self, kind, message):
+        self._file_validated = False
+        if kind == "library":
+            self.library_loading = False
+            self.library_message = message
+            self._update_navigation()
+            self.library_status_changed.emit(message)
+        self.preview_label.setText(message)
+        self._update_print_button()
+
+    def select_remote_file(self, entry):
+        if self.print_service.busy:
+            return
+        self.current_folder = entry.parent
+        self.gcode_files = [item for item in self.remote_folders[self.current_folder] if not item.is_folder]
+        self.current_file_index = self.gcode_files.index(entry)
+        self._update_navigation()
+        self.update_selected_file()
+
+    def check_printer_status(self, _checked=False, *, manual=True):
+        if self.print_service.busy or self.printer_status_service.reply is not None:
+            return
+        self._manual_status = manual
+        self.printer_status_button.setEnabled(False)
+        if manual:
+            self.printer_status_label.setText("Checking printer status…")
+        self.start_print_button.setEnabled(False)
+        self.printer_status_service.check()
+
+    def _printer_status_completed(self, message):
+        self._status_checked_at = time.monotonic()
+        status = self.printer_status_service.status
+        if status.busy or (self._manual_status and status.ready):
+            self._awaiting_print = False
+        if self._manual_status and (status.ready or status.busy):
+            self.print_message_label.hide()
+        self._manual_status = False
+        self.printer_status_label.setText(message)
+        self.printer_status_button.setEnabled(True)
+        self._update_print_button()
+
+    def start_print(self):
+        # Recompute the gate even for direct calls or a click queued before a poll.
+        self._update_print_button()
+        if not self.start_print_button.isEnabled():
+            return
+        self.printer_status_service.cancel()
+        self.start_print_button.setEnabled(False)
+        self.printer_status_button.setEnabled(False)
+        self.start_print_button.setText("Starting…")
+        self.print_message_label.hide()
+        self.print_service.start(self.selected_remote_file, self.file_service.library_source)
+        self._update_navigation()
+
+    def _print_completed(self, result, message):
+        self._awaiting_print = result in ("accepted", "unknown")
+        self.start_print_button.setText("Start Print")
+        self.printer_status_button.setEnabled(True)
+        self.print_message_label.setText(message)
+        self.print_message_label.setVisible(bool(message))
+        self._update_navigation()
+        if self.status_poll_timer.isActive():
+            self.check_printer_status(manual=False)
+
+    def _stop_background_work(self):
+        self.status_poll_timer.stop()
+        self.printer_status_service.cancel()
+        self.print_service.cancel_preflight()
+        self.start_print_button.setEnabled(False)
+        self.preview_loader.cancel()
+        self.file_service.cancel()
 
     # Return to the owning home screen before this window closes.
     def closeEvent(self, event):
-        self.preview_loader.cancel()
+        self._stop_background_work()
         self.home_requested.emit()
         super().closeEvent(event)
 
     def hideEvent(self, event):
-        self.preview_loader.cancel()
+        self._stop_background_work()
         super().hideEvent(event)
 
     def showEvent(self, event):
         super().showEvent(event)
+        if self.gcode_dir is None:
+            self.status_poll_timer.start()
+            self.check_printer_status(manual=False)
+            if ((self.library_loading and "library" not in self.file_service.active)
+                    or (self.library_message and not self.library_loading)):
+                self.load_gcode_files()
+            elif not self.library_loading and self.selected_remote_file is not None:
+                self.update_selected_file()
+            return
         if self._preview_path is not None and self.preview_label.text() == "Loading preview…":
             self.display_gcode_preview(self._preview_path)
 
     # Find the G-code files and show the first filename in the interface.
     def load_gcode_files(self):
+        if self.print_service.busy:
+            return
+        self._file_validated = False
         self.preview_loader.cancel()
+        self._preview_request = -1
         self._preview_path = None
+        if self.gcode_dir is None:
+            self.file_service.cancel()
+            self.library_loading = True
+            self.library_message = "Loading OctoPrint files…"
+            self.preview_label.setText(self.library_message)
+            self._update_navigation()
+            self.library_status_changed.emit(self.library_message)
+            self.file_service.load_library()
+            return
         try:
             # Check that the configured path points to an existing folder.
             if not self.gcode_dir.is_dir():
@@ -280,6 +465,12 @@ class GcodeDisplayPrintApp(QWidget):
 
     # Select a file from the same ordered list used by the navigation arrows.
     def show_file_list(self):
+        if self.gcode_dir is None:
+            dialog = OctoPrintFileDialog(self)
+            if dialog.exec() == QDialog.DialogCode.Accepted and dialog.selected_file is not None:
+                self.select_remote_file(dialog.selected_file)
+            dialog.deleteLater()
+            return
         if not self.gcode_files:
             return
 
@@ -354,32 +545,33 @@ class GcodeDisplayPrintApp(QWidget):
 
     # Display the previous file, wrapping to the last file from the first.
     def show_previous_file(self):
-        # Avoid changing the selection when no files are available.
-        if not self.gcode_files:
-            return
-
-        # The remainder operator keeps the index within the available files.
-        self.current_file_index = (
-            self.current_file_index - 1
-        ) % len(self.gcode_files)
-
-        self.update_selected_file()
+        self._move_selection(-1)
 
     # Display the next file, wrapping to the first file from the last.
     def show_next_file(self):
-        if not self.gcode_files:
+        self._move_selection(1)
+
+    def _move_selection(self, offset):
+        if not self.gcode_files or self.print_service.busy:
             return
-
-        self.current_file_index = (
-            self.current_file_index + 1
-        ) % len(self.gcode_files)
-
+        self.current_file_index = (self.current_file_index + offset) % len(self.gcode_files)
         self.update_selected_file()
 
     # Keep the displayed filename matched to the selected file.
     # Update the filename and preview together when the selection changes.
     def update_selected_file(self):
         selected_file = self.gcode_files[self.current_file_index]
+        if self.gcode_dir is None:
+            self._file_validated = False
+            self._update_print_button()
+            self.preview_loader.cancel()
+            self._preview_request = -1
+            self._preview_path = None
+            self.selected_remote_file = selected_file
+            self.filename_label.setText(selected_file.path)
+            self.preview_label.setText("Loading preview…")
+            self.file_service.fetch_file(selected_file)
+            return
         self.filename_label.setText(selected_file.name)
         self.display_gcode_preview(selected_file)
 

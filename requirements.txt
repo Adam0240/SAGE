@@ -8,6 +8,7 @@ iniconfig==2.3.0
 Mako==1.4.3
 mediapipe==1.2.0
 numpy==2.5.4
+ollama==0.6.3
 opencv-contrib-python==5.0.0.93
 MarkupSafe==3.0.4
 packaging==26.3

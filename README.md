@@ -18,6 +18,8 @@ python -m venv .venv
 ```
 
 The commands below use the environment's Python directly, so activation is optional.
+Python dependencies are listed in `requirements.txt`, including `ollama==0.6.3`
+(the Ollama Python client).
 Camera controls start automatically when Home opens. On each new device, follow
 the [camera setup and calibration guide](TouchControls/README.md): download the
 Hand Landmarker model, check the webcam, and save a calibration for the desk/display
@@ -41,12 +43,60 @@ and file selection. The third application button opens STEAM Guide; its Home but
 preserves the current question, response, and session.
 Close the home window or press Escape on the home screen to exit.
 
+The G-code viewer loads your uploaded OctoPrint library. **View File List** opens
+its folders; select a folder and press **Open** to enter it, use **Back** to go up,
+and select a G-code to preview it. The dialog shows the current folder path.
+Search filters names in that folder, and **Refresh** reloads the library from
+OctoPrint. The viewer's previous/next arrows browse G-codes within the selected
+file's folder. Supported extensions are `.gcode`, `.gco`, and `.g`.
+
 G-code previews load in the background, so navigation and Home remain available
 while a preview is generated. Rapid file changes keep only the latest queued
 selection. Returning Home cancels the current preview; reopening the viewer resumes
 it if needed. Uncached files exceeding 500,000 X/Y positions display a size-limit
-message rather than a partial preview. Previews support straight-line X/Y movements;
-the Start Print button is disabled because printing is not implemented.
+message rather than a partial preview. Previews support straight-line X/Y movements.
+
+**Start Print** starts the selected file already stored in OctoPrint. It is enabled
+only after the selected file has downloaded successfully and a fresh status check
+confirms the printer is connected and idle. Status updates automatically every three
+seconds while the viewer is open. Printing, paused jobs, transitions, disconnected
+printers, and unknown states disable the button. Clicking Start Print disables it
+immediately, rechecks the printer, then sends one select-and-print request; OctoPrint
+also rejects the command if another job starts between the check and submission.
+File navigation is disabled during submission so the chosen file stays fixed.
+
+Print requests are never retried automatically. After acceptance, Start Print stays
+disabled until the job is seen as busy and later idle. If a request times out, its
+outcome may be unknown: check OctoPrint, then click **Printer Status** to confirm the
+printer is idle before retrying. The same manual check can release the button if a
+very short job finishes between status updates. Returning Home cancels a pending
+preflight check, but does not cancel a print command already sent or an active print.
+
+Configure `OCTOPRINT_URL` (the server's base URL, including any hosting subpath)
+and `OCTOPRINT_API_KEY` in the repository-root `.env`. The API user needs
+`FILES_LIST` and `FILES_DOWNLOAD` for browsing and previews, `STATUS` for
+Printer Status, and `FILES_SELECT` and `PRINT` to start printing. Environment variables override these values. No separate PC
+G-code folder is required. This browser uses files uploaded to OctoPrint; it does
+not browse the printer's SD card. See the [OctoPrint file API](https://docs.octoprint.org/en/main/api/files.html).
+
+Selected files are downloaded to `sage_apps/thumbnails/gcodes/`; generated images
+are cached in `sage_apps/thumbnails/`. Cache names include the server, full remote
+path, and version metadata, so identically named files in different folders stay
+separate. Metadata is checked before cache reuse, and Refresh rechecks the selected
+file. The cache can be removed while SAGE is closed and will be recreated as needed.
+File-list/metadata requests time out after 15 seconds; downloads time out after
+120 seconds and are limited to 128 MB per file. Returning Home cancels pending
+requests; reopening rechecks the selection. Missing files, permission failures,
+and connection errors display a message; use Refresh to retry.
+
+The **Printer Status** button above Start Print checks OctoPrint and reports whether
+the printer is connected and idle or busy (including paused prints). Set
+`OCTOPRINT_URL` to your OctoPrint server's base URL and `OCTOPRINT_API_KEY` to a key
+with `STATUS` permission in the repository-root `.env`; environment variables override
+these values. Settings are read on each check. The check runs without blocking the
+interface and times out after eight seconds. Results are a snapshot; click again
+to refresh. Unreachable servers, authentication failures, and unavailable printer
+states show an explanation instead of claiming the printer is idle.
 
 Camera input uses a one-second index-finger hover over SAGE controls. It works
 across Home, the G-code viewer, STEAM Guide, and owned dialogs. Text fields use a
