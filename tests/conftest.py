@@ -19,6 +19,7 @@ REQUIRED_TEST_MODULES = {
     "ui/test_hand_calibration.py",
     "ui/test_main_window.py",
     "ui/test_gcodedisplayapp.py",
+    "ui/test_octoprint_files.py",
     "ui/test_gcode_preview_service.py",
     "ui/test_account_dialog.py",
     "ui/test_login_dialog.py",

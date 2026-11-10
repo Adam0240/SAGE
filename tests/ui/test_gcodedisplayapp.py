@@ -4,6 +4,8 @@ import tempfile
 import unittest
 import time
 import threading
+import json
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch, ANY
 
@@ -13,6 +15,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog, QDialogButtonBox, QListWidget, QLineEdit, QLabel
 
 from sage_apps import gcode_display_print_app as gcode_app
+from services.printer_status_service import status_message
 
 
 class TestGcodeDisplayApp(unittest.TestCase):
@@ -35,6 +38,91 @@ class TestGcodeDisplayApp(unittest.TestCase):
         file_path = self.gcode_dir / name
         file_path.write_text(content, encoding="utf-8")
         return file_path
+
+    def test_printer_status_missing_configuration(self):
+        with patch.dict("os.environ", {"OCTOPRINT_URL": "", "OCTOPRINT_API_KEY": ""}):
+            self.window.printer_status_button.click()
+        self.assertIn("not configured", self.window.printer_status_label.text())
+        self.assertTrue(self.window.printer_status_button.isEnabled())
+        self.assertLess(self.window.main_layout.indexOf(self.window.printer_status_button),
+                        self.window.main_layout.indexOf(self.window.start_print_button))
+
+    def test_printer_status_http_and_timeout(self):
+        requests = []
+        flags = dict(operational=True, printing=False, paused=False, ready=True,
+                     closedOrError=False, error=False)
+        response = {"code": 200, "body": json.dumps({"state": {"flags": flags}}).encode()}
+        release = threading.Event()
+        started = threading.Event()
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(handler):
+                requests.append((handler.path, handler.headers.get("X-Api-Key")))
+                if response.get("slow"):
+                    started.set()
+                    release.wait(3)
+                    return
+                handler.send_response(response["code"])
+                handler.end_headers()
+                handler.wfile.write(response["body"])
+
+            def log_message(self, *args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+
+        def wait_for_status():
+            deadline = time.monotonic() + 3
+            while not self.window.printer_status_button.isEnabled() and time.monotonic() < deadline:
+                QTest.qWait(10)
+            self.assertTrue(self.window.printer_status_button.isEnabled())
+
+        try:
+            with patch.dict("os.environ", {
+                "OCTOPRINT_URL": f"http://127.0.0.1:{server.server_port}/octoprint",
+                "OCTOPRINT_API_KEY": "test-key",
+            }):
+                for code, expected in ((200, "Printer connected — idle"), (409, "not operational"),
+                                       (401, "API key"), (403, "STATUS permission"),
+                                       (500, "Unable to check")):
+                    response["code"] = code
+                    self.window.printer_status_button.click()
+                    wait_for_status()
+                    self.assertIn(expected, self.window.printer_status_label.text())
+                self.assertTrue(all(request == ("/octoprint/api/printer", "test-key")
+                                    for request in requests))
+                response["slow"] = True
+                self.window.printer_status_service.timer.setInterval(150)
+                self.window.printer_status_button.click()
+                ticks = []
+                QTimer.singleShot(10, lambda: ticks.append(True))
+                wait_for_status()
+                self.assertTrue(ticks)
+                self.assertTrue(started.is_set())
+                self.assertIn("timed out", self.window.printer_status_label.text())
+                self.assertFalse(self.window.start_print_button.isEnabled())
+        finally:
+            release.set()
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
+    def test_printer_status_busy_and_invalid_responses(self):
+        base = dict(operational=True, printing=False, paused=False, ready=True,
+                    closedOrError=False, error=False)
+        for change, expected in (({"printing": True}, "Printer connected — busy"),
+                                 ({"paused": True}, "Printer connected — busy"),
+                                 ({"cancelling": True}, "Printer connected — busy"),
+                                 ({"pausing": True}, "Printer connected — busy"),
+                                 ({"ready": False}, "busy status unknown"),
+                                 ({"closedOrError": True}, "not operational"),
+                                 ({"operational": False}, "not operational")):
+            body = json.dumps({"state": {"flags": base | change}})
+            self.assertIn(expected, status_message(200, body))
+        for body in (b"invalid", b"{}", b"null", b'{"state":{"flags":{}}}'):
+            self.assertIn("invalid response", status_message(200, body))
 
     def load_files(self, gcode_dir=None):
         # Create a fresh window to exercise the complete startup loading behavior.

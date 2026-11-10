@@ -26,6 +26,14 @@ The test files are grouped by feature:
 - `ui/test_gcodedisplayapp.py`: G-code discovery, button/keyboard navigation,
   file-list search/selection/cancellation, preview messages/scaling, configurable folder paths,
   responsiveness during slow previews, latest-request handling, cancellation, and viewer destruction.
+- `ui/test_octoprint_files.py`: real Qt HTTP requests against a local test server,
+  nested folders/search/Back, folder-scoped navigation, duplicate filenames, encoded
+  paths, cache reuse/invalidation, removed files, permissions, timeouts, cancellation,
+  and returning Home during downloads. Print tests cover idle/busy/paused/unknown
+  gating, automatic status updates, preflight and server conflict checks, encoded
+  file paths, duplicate clicks, pending requests, permission errors, timeouts without
+  automatic retries, and Home during preflight/submission. These tests never contact
+  a real printer.
 - `unit/test_gcode_parser.py`: supported movement commands, coordinate formats,
   comments, omitted axes, and file read errors without Qt.
 - `ui/test_gcode_preview_service.py`: image rendering, thumbnail caching/invalidation,
