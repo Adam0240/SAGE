@@ -8,6 +8,11 @@ repeating the same operations in a separate repository test suite.
 
 The test files are grouped by feature:
 
+- `unit/test_speech_recognition_service.py`: mocked capture/transcription, manual
+  stop, cancellation at each processing stage, silence/time limits, resource
+  cleanup, errors/retries, model reuse, and worker callbacks. No microphone,
+  speech dependencies, model download, or network is used; see
+  [speech setup and lifecycle](../services/SPEECH.md).
 - `unit/test_account_service.py`: permissions, validation, and safe account display fields.
 - `unit/test_authentication_service.py`: accepted/rejected login credentials.
 - `unit/test_password_service.py`: hashing, verification, and password changes.

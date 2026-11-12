@@ -1,0 +1,5 @@
+# Optional standalone speech service; versions must be validated on deployment Python.
+# NumPy is also included in the main application's requirements.
+numpy
+sounddevice
+faster-whisper

@@ -128,6 +128,14 @@ the interface. `services/guide_response_service.py` formats matches and handles
 uncertainty; a future AI responder can use the same retrieved sections and sources.
 No AI credentials, network service, or database are required for document search.
 
+## Standalone speech recognition
+
+The optional `services/speech_recognition_service.py` records and transcribes
+speech locally, independently of the GUI. See the
+[speech setup guide](services/SPEECH.md) for optional dependencies, offline model
+downloads, stop/cancel behavior, and mocked tests. It is not yet connected to
+STEAM Guide or the AI assistant.
+
 ## Set up staff login
 
 For a new installation, copy the configuration template without overwriting an existing

@@ -1,10 +1,12 @@
+"""GUI-independent, offline speech capture and transcription.
 
+Callbacks run on the worker thread. Cancellation is cooperative: an active
+device read or model operation must return before the worker can finish.
+"""
 import threading
 import time
 
 import numpy as np
-import sounddevice as sd
-from faster_whisper import WhisperModel
 
 
 class SpeechRecognitionService:
@@ -16,6 +18,9 @@ class SpeechRecognitionService:
         silence_threshold=0.015,
         max_recording_duration=20,
         wait_for_speech_timeout=10,
+        *,
+        stream_factory=None,
+        model_factory=None,
     ):
         self.sample_rate = sample_rate
         self.silence_duration = silence_duration
@@ -25,6 +30,8 @@ class SpeechRecognitionService:
 
         self.model_size = model_size
         self.model = None
+        self._stream_factory = stream_factory
+        self._model_factory = model_factory
 
         self._recording_thread = None
         self._stop_event = threading.Event()
@@ -35,7 +42,11 @@ class SpeechRecognitionService:
     def _load_model(self):
         """Load the local speech recognition model when needed."""
         if self.model is None:
-            self.model = WhisperModel(
+            factory = self._model_factory
+            if factory is None:
+                from faster_whisper import WhisperModel
+                factory = WhisperModel
+            self.model = factory(
                 self.model_size,
                 device="cpu",
                 compute_type="int8",
@@ -52,12 +63,17 @@ class SpeechRecognitionService:
             self._stop_event.clear()
             self._cancel_event.clear()
 
-            self._recording_thread = threading.Thread(
-                target=self._record_and_transcribe,
-                args=(on_result, on_error),
-                daemon=True,
-            )
-            self._recording_thread.start()
+            try:
+                self._recording_thread = threading.Thread(
+                    target=self._record_and_transcribe,
+                    args=(on_result, on_error),
+                    daemon=True,
+                )
+                self._recording_thread.start()
+            except Exception:
+                self._recording_thread = None
+                self._is_recording = False
+                raise
 
         return True
 
@@ -117,6 +133,12 @@ class SpeechRecognitionService:
 
     def _capture_audio(self):
         """Record until silence, timeout, or manual stop."""
+        if self._stop_event.is_set():
+            return None
+        factory = self._stream_factory
+        if factory is None:
+            import sounddevice as sd
+            factory = sd.InputStream
         audio_chunks = []
         speech_detected = False
         silence_start = None
@@ -125,7 +147,7 @@ class SpeechRecognitionService:
         block_duration = 0.1
         block_size = int(self.sample_rate * block_duration)
 
-        with sd.InputStream(
+        with factory(
             samplerate=self.sample_rate,
             channels=1,
             dtype="float32",
@@ -174,7 +196,7 @@ class SpeechRecognitionService:
         if self._cancel_event.is_set() or not audio_chunks:
             return None
 
-        if not speech_detected and not self._stop_event.is_set():
+        if not speech_detected:
             return None
 
         return np.concatenate(audio_chunks).flatten()

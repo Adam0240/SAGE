@@ -6,6 +6,7 @@ import pytest
 
 
 REQUIRED_TEST_MODULES = {
+    "unit/test_speech_recognition_service.py",
     "unit/test_account_service.py",
     "unit/test_authentication_service.py",
     "unit/test_password_service.py",
