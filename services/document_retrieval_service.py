@@ -104,6 +104,22 @@ class _Heading:
     body: str = ""
 
 
+def _parse_heading(line):
+    # Match only the bounded prefix; scan whitespace and closing hashes with
+    # string operations so long headings cannot trigger regex backtracking.
+    prefix = re.match(r"^\s{0,3}(#{1,6})\s", line)
+    if prefix is None:
+        return None
+    remainder = line[prefix.end():]
+    if not remainder:
+        return None
+    text = remainder.lstrip() or remainder[-1]
+    # Preserve the old pattern's nonempty heading text, including headings
+    # consisting only of hashes or whitespace.
+    text = text[0] + text[1:].rstrip().rstrip("#").rstrip()
+    return _Heading(len(prefix.group(1)), text)
+
+
 def parse_sections(filename, markdown):
     """Split ATX headings, retaining lists, fenced code, and ancestor guidance."""
     title = Path(filename).stem
@@ -134,10 +150,10 @@ def parse_sections(filename, markdown):
                 fence = None
             lines.append(line)
             continue
-        heading = None if fence else re.match(r"^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$", line)
+        heading = None if fence else _parse_heading(line)
         if heading:
             flush()
-            level, text = len(heading.group(1)), heading.group(2)
+            level, text = heading.level, heading.text
             while stack and stack[-1].level >= level:
                 stack.pop()
             stack.append(_Heading(level, text))

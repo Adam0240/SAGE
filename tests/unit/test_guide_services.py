@@ -102,6 +102,38 @@ Ask staff before adjusting equipment.
     assert edited[-1].identifier == section.identifier
 
 
+@pytest.mark.parametrize("line, expected", [
+    ("## Heading", "Heading"),
+    ("   ###### Heading ###  ", "Heading"),
+    ("##\t Heading\t##\t", "Heading"),
+    ("## Heading###", "Heading"),
+    ("## Heading # #  ", "Heading #"),
+    ("## C# examples", "C# examples"),
+    ("## ###", "#"),
+    ("##  ", " "),
+    ("## \t", "\t"),
+    ("## ", None),
+    ("##", None),
+    ("##Heading", None),
+    ("####### Heading", None),
+    ("    ## Heading", None),
+])
+def test_heading_delimiters_preserve_existing_behavior(line, expected):
+    section, = parse_sections("guide.md", line + "\nInstructions.")
+    assert section.headings == (() if expected is None else (expected,))
+    assert section.markdown == (
+        (line + "\nInstructions.").strip() if expected is None else "Instructions.")
+
+
+def test_long_heading_whitespace_and_hash_runs_preserve_text():
+    # Trailing text after long whitespace/hash runs forced the old lazy regex
+    # to repeatedly reconsider potential closing delimiters.
+    text = "Heading" + " " * 100_000 + "#" * 100_000 + " end"
+    section, = parse_sections("guide.md", "## " + text + " ###\nInstructions.")
+    assert section.headings == (text,)
+    assert section.markdown == "Instructions."
+
+
 def test_parent_cautions_are_included_in_response(tmp_path):
     (tmp_path / "printer.md").write_text(
         "# Printer\n## Troubleshooting\nAsk staff before adjustments.\n"

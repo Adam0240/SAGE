@@ -345,10 +345,11 @@ def in_modal(s, action, callback):
         timer.stop()
         called.append(True)
         try:
-            assert dialog is not None
             activate_window(s, dialog)
             callback(dialog)
         except Exception as error:
+            # Qt callbacks cannot propagate failures directly to pytest. Re-raise
+            # them below after the modal event loop exits and cleanup completes.
             errors.append(error)
         finally:
             if dialog is not None and dialog.isVisible():
