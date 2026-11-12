@@ -1,4 +1,5 @@
 .venv/
+.venv-stt
 __pycache__/
 *.pyc
 .env
@@ -11,3 +12,4 @@ __pycache__/
 /TouchControls/calibration.json.*.tmp
 
 .pytest_cache/
+
