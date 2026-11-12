@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 if __name__ == "__main__" and __package__ is None:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from services.ai_response_worker import AIResponseLoader
 from services.document_retrieval_service import DocumentRetrievalService
 from services.guide_response_service import GuideResponseService
 from TouchControls.widgets import scroll_controls
@@ -44,6 +45,11 @@ class SteamGuide_App(QWidget):
         )
         self.retrieval_service = DocumentRetrievalService(self.tutorial_directory)
         self.response_service = GuideResponseService()
+
+        # Handle AI responses without blocking the interface.
+        self.ai_loader = AIResponseLoader(self)
+        self.ai_loader.completed.connect(self._ai_response_completed)
+        self._ai_request = 0
 
         self.build_layout()
         self.load_reference_files()
@@ -226,9 +232,23 @@ class SteamGuide_App(QWidget):
         """)
 
     def closeEvent(self, event):
-        # Return to the existing SAGE window with its session intact.
+        # Ignore pending AI responses when returning Home.
+        self.ai_loader.cancel()
+        self._ai_request = 0
+
+        self.ask_button.setEnabled(True)
+        self.question_input.setEnabled(True)
+
         self.home_requested.emit()
         super().closeEvent(event)
+
+    def hideEvent(self, event):
+        # Discard responses if the guide is hidden during generation.
+        self.ai_loader.cancel()
+        self._ai_request = 0
+        self.ask_button.setEnabled(True)
+        self.question_input.setEnabled(True)
+        super().hideEvent(event)
 
     def load_reference_files(self):
         # Rebuild from the current index so added and removed files stay in sync.
@@ -273,18 +293,39 @@ class SteamGuide_App(QWidget):
             )
 
     def submit_question(self):
-        # Ignore empty questions.
         question = self.question_input.text().strip()
 
-        if not question:
+        if not question or self.ai_loader.busy:
             return
 
-        result = self.retrieval_service.search(question)
-        response = self.response_service.respond(question, result)
+        # Display feedback while the AI processes the question.
+        self.response_display.setPlainText("SAGE is thinking...")
+        self.source_label.setText("Sources used: None")
+        self.ask_button.setEnabled(False)
+        self.question_input.setEnabled(False)
+
+        # Submit the question to the background worker.
+        self._ai_request = self.ai_loader.submit(
+            question,
+            self.tutorial_directory,
+        )
+
+
+    def _ai_response_completed(self, request_id, response):
+        # Ignore outdated results.
+        if request_id != self._ai_request:
+            return
+
         self.response_display.setMarkdown(response.markdown)
         self.source_label.setText(
             "Sources used: " + ("; ".join(response.sources) or "None")
         )
+
+        self.ask_button.setEnabled(True)
+        self.question_input.setEnabled(True)
+
+        # Refresh the reference document list.
+        self.retrieval_service.refresh()
         self.load_reference_files()
 
     def open_reference(self, file_path):

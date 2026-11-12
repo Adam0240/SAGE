@@ -314,7 +314,9 @@ def key(dialog, label):
     return next(button for button in dialog.findChildren(QPushButton) if button.text() == label)
 
 
-def test_guide_dwell_focus_physical_typing_ask_and_home(setup):
+@patch("services.ai_assistant_service.Client")
+def test_guide_dwell_focus_physical_typing_ask_and_home(client, setup):
+    client.return_value.chat.side_effect = ConnectionError("Offline test")
     s = setup
     dwell_widget(s, s.window.app_buttons[2])
     guide = s.window.steamguide_window
@@ -324,6 +326,11 @@ def test_guide_dwell_focus_physical_typing_ask_and_home(setup):
     QTest.keyClicks(QApplication.focusWidget(), "hours")
     assert guide.question_input.text() == "hours"
     dwell_widget(s, guide.ask_button)
+    deadline = time.perf_counter() + 3
+    while guide.ai_loader.busy and time.perf_counter() < deadline:
+        QTest.qWait(5)
+    assert not guide.ai_loader.busy
+    assert guide.ask_button.isEnabled()
     assert "placeholder" not in guide.response_display.toPlainText()
     assert "STEAM Room Hours" in guide.source_label.text()
     dwell_widget(s, guide.home_button)
