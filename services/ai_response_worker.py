@@ -12,8 +12,10 @@ from services.document_retrieval_service import DocumentRetrievalService
 from services.guide_response_service import GuideResponse, GuideResponseService
 
 
-def generate_response(question, directory, request_id, cancelled, results):
+def generate_response(question, directory, request_id, cancelled, results, shutdown):
     """Generate an answer without accessing any Qt widgets."""
+    if cancelled.is_set() or shutdown.is_set():
+        return
     try:
         retrieval = DocumentRetrievalService(directory)
 
@@ -33,7 +35,7 @@ def generate_response(question, directory, request_id, cancelled, results):
         )
 
     # Ignore answers from cancelled requests.
-    if not cancelled.is_set():
+    if not cancelled.is_set() and not shutdown.is_set():
         results.put((request_id, response))
 
 
@@ -48,13 +50,16 @@ class AIResponseLoader(QObject):
         self.pending = None
         self.cancelled = Event()
         self.results = Queue()
+        self.shutdown = Event()
 
         # Poll for results on the Qt interface thread.
         self.timer = QTimer(self)
         self.timer.setInterval(25)
         self.timer.timeout.connect(self._poll)
 
-        self.destroyed.connect(lambda: self.cancelled.set())
+        # Capture only Python state: destruction must never dereference this
+        # QObject, and an unfinished worker must not keep it alive.
+        self.destroyed.connect(self.shutdown.set)
 
     @property
     def busy(self):
@@ -81,6 +86,10 @@ class AIResponseLoader(QObject):
         self.request_id += 1
         self.cancelled.set()
         self.pending = None
+        # The abandoned daemon owns only Python data, so it can finish without
+        # blocking a new question or the destruction of the guide.
+        self.thread = None
+        self.timer.stop()
 
     def _start_pending(self):
         if self.thread is not None or self.pending is None:
@@ -98,6 +107,7 @@ class AIResponseLoader(QObject):
                 request_id,
                 self.cancelled,
                 self.results,
+                self.shutdown,
             ),
             daemon=True,
         )

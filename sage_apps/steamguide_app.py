@@ -18,12 +18,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from services.ai_response_worker import AIResponseLoader
-
 # Keep standalone launches able to import the shared services.
 if __name__ == "__main__" and __package__ is None:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from services.ai_response_worker import AIResponseLoader
 from services.document_retrieval_service import DocumentRetrievalService
 from services.guide_response_service import GuideResponseService
 from TouchControls.widgets import scroll_controls
@@ -233,8 +232,9 @@ class SteamGuide_App(QWidget):
         """)
 
     def closeEvent(self, event):
-    # Ignore pending AI responses when returning Home.
+        # Ignore pending AI responses when returning Home.
         self.ai_loader.cancel()
+        self._ai_request = 0
 
         self.ask_button.setEnabled(True)
         self.question_input.setEnabled(True)
@@ -243,8 +243,9 @@ class SteamGuide_App(QWidget):
         super().closeEvent(event)
 
     def hideEvent(self, event):
-    # Discard responses if the guide is hidden during generation.
+        # Discard responses if the guide is hidden during generation.
         self.ai_loader.cancel()
+        self._ai_request = 0
         self.ask_button.setEnabled(True)
         self.question_input.setEnabled(True)
         super().hideEvent(event)
