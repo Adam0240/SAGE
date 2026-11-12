@@ -1,11 +1,12 @@
 from types import SimpleNamespace
 import time
+import warnings
 from unittest.mock import Mock, patch
 
 import pytest
-from PySide6.QtCore import QObject, QPoint, Signal, QTimer, Qt
+from PySide6.QtCore import QCoreApplication, QEvent, QObject, QPoint, Signal, QTimer, Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QPushButton, QLineEdit, QListWidget, QComboBox, QTextBrowser
+from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QPushButton, QLineEdit, QListWidget, QComboBox, QTextBrowser, QWidget
 
 from main import SageWindow
 from TouchControls.calibration import Calibration, target_points
@@ -36,12 +37,14 @@ class FakeWorker(QObject):
 @pytest.fixture
 def setup(tmp_path, monkeypatch):
     app = QApplication.instance() or QApplication([])
-    clock = [time.monotonic()]
-    monkeypatch.setattr("TouchControls.home_input.time.monotonic", lambda: clock[0])
+    clock = [1000.0]
+    # Replace only the controller's clock, not time.monotonic process-wide.
+    monkeypatch.setattr("TouchControls.home_input.time",
+                        SimpleNamespace(monotonic=lambda: clock[0]))
     window = SageWindow(camera_controls=False)
     window.show()
-    window.activateWindow()
     app.processEvents()
+    set_test_active_window(window)
     path = tmp_path / "calibration.json"
     Calibration(2, (1920, 1080), (0, 0, 1920, 1080), 1,
                 [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
@@ -54,13 +57,15 @@ def setup(tmp_path, monkeypatch):
     controller.stopped.connect(window.camera_stopped)
     controller.start()
     state = SimpleNamespace(app=app, window=window, controller=controller, clock=clock, path=path, statuses=statuses)
+    activate_window(state, window)
     yield state
     controller.stop()
     if controller.worker is not None:
         controller.worker.finished.emit()
     window.close()
     window.deleteLater()
-    app.processEvents()
+    # Remove old windows and their application event filters before the next test.
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
 def observe(state, point, count=1, size=(1920, 1080)):
@@ -74,11 +79,53 @@ def center(button):
     return point.x(), point.y()
 
 
+def input_state(s):
+    controller = s.controller
+    return {
+        "active": QApplication.activeWindow(),
+        "modal": QApplication.activeModalWidget(),
+        "popup": QApplication.activePopupWidget(),
+        "current": controller.current_window(),
+        "surface": controller.surface,
+        "enabled": controller.enabled,
+        "pause_depth": controller.pause_depth,
+        "target": controller.dwell.target,
+        "locked": controller.dwell.locked,
+        "progress": controller.dwell.progress,
+        "clock": s.clock[0],
+        "accept_after": controller.accept_after,
+        "last_timestamp": controller.last_timestamp,
+    }
+
+
+def set_test_active_window(window):
+    # Qt deprecated this in favor of native activation requests, but tests need
+    # synchronous Qt focus state even when the offscreen OS request is ignored.
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=DeprecationWarning,
+                                message=r"Function: 'QApplication\.setActiveWindow")
+        QApplication.setActiveWindow(window)
+
+
+def activate_window(s, window):
+    # Drain layout/native events, then synchronously establish Qt's active window.
+    # activateWindow() only requests OS focus, which offscreen CI may never grant.
+    # Keep current_window() real so ownership, modal and popup checks still apply.
+    s.app.processEvents()
+    assert window.isVisible(), input_state(s)
+    set_test_active_window(window)
+    assert QApplication.activeWindow() is window, input_state(s)
+    selected = s.controller.current_window()
+    assert selected is (window if s.controller.owns(window) else None), input_state(s)
+    s.controller.use_window(selected)
+
+
 def test_dwell_opens_guide_once_and_home_requires_new_dwell(setup):
     s = setup
     point = center(s.window.app_buttons[2])
     observe(s, point, 10)
     assert s.window.steamguide_window is None
+    assert 0 < s.controller.dwell.progress < 1, input_state(s)
     observe(s, point, 2)
     guide = s.window.steamguide_window
     assert guide.isVisible() and not s.window.isVisible()
@@ -86,11 +133,12 @@ def test_dwell_opens_guide_once_and_home_requires_new_dwell(setup):
     observe(s, point, 20)
     assert guide.isVisible()
     guide.home_button.click()
-    s.app.processEvents()
+    activate_window(s, s.window)
     observe(s, point, 5)
     assert s.window.isVisible()
+    assert 0 < s.controller.dwell.progress < 1, input_state(s)
     observe(s, point, 7)
-    assert guide.isVisible()
+    assert guide.isVisible(), input_state(s)
 
 
 def test_disabled_and_circle_corner_buttons_do_not_activate(setup):
@@ -132,8 +180,7 @@ def test_dialogs_and_explicit_suspension_block_activation(setup):
     observe(s, point, 20)
     assert s.window.steamguide_window is None
     dialog.close()
-    s.window.activateWindow()
-    s.app.processEvents()
+    activate_window(s, s.window)
     with s.controller.suspended():
         observe(s, point, 20)
     observe(s, point, 5)
@@ -272,11 +319,17 @@ def test_camera_failure_has_dismissible_dialog_instead_of_status_row(setup):
 
 
 def dwell_widget(s, widget):
-    # The offscreen Qt backend does not restore native focus after modal close.
-    widget.window().activateWindow()
-    s.app.processEvents()
-    s.controller.use_window(s.controller.current_window())
-    observe(s, center(widget), 13)
+    activate_window(s, widget.window())
+    assert s.controller.active(), input_state(s)
+    assert widget.isVisible() and widget.isEnabled(), input_state(s)
+    local = widget.mapTo(widget.window(), widget.rect().center())
+    target = s.controller.target_at((local.x(), local.y()))
+    assert target is not None and target[0] is widget, input_state(s)
+    point = center(widget)
+    observe(s, point, 6)
+    assert s.controller.dwell.target == target, input_state(s)
+    assert 0 < s.controller.dwell.progress < 1, input_state(s)
+    observe(s, point, 7)
 
 
 def in_modal(s, action, callback):
@@ -293,6 +346,7 @@ def in_modal(s, action, callback):
         called.append(True)
         try:
             assert dialog is not None
+            activate_window(s, dialog)
             callback(dialog)
         except Exception as error:
             errors.append(error)
@@ -307,7 +361,7 @@ def in_modal(s, action, callback):
         timer.stop()
     if errors:
         raise errors[0]
-    assert called, "Expected a modal dialog to open"
+    assert called, f"Expected a modal dialog to open: {input_state(s)}"
 
 
 def key(dialog, label):
@@ -431,7 +485,7 @@ def test_account_tabs_close_and_external_windows_are_isolated(setup):
         dialog = AccountManagementDialog(1, "boss_admin", parent=s.window)
     dialog.setModal(True)
     dialog.show()
-    s.app.processEvents()
+    activate_window(s, dialog)
     bar = dialog.tabs.tabBar()
     position = bar.mapToGlobal(bar.tabRect(1).intersected(bar.rect()).center())
     s.controller.use_window(dialog)
@@ -439,15 +493,27 @@ def test_account_tabs_close_and_external_windows_are_isolated(setup):
     assert dialog.tabs.currentIndex() == 1
     assert not dialog.delete_button.isEnabled()
     dwell_widget(s, dialog.close_button)
-    assert not dialog.isVisible()
+    assert not dialog.isVisible(), input_state(s)
     external = QDialog()
     external.show()
-    external.activateWindow()
-    s.app.processEvents()
-    assert s.controller.current_window() is None
+    activate_window(s, external)
+    assert s.controller.current_window() is None, input_state(s)
     observe(s, center(s.window.app_buttons[2]), 20)
     assert s.window.steamguide_window is None
     external.close()
+    external.deleteLater()
+
+
+def test_dwell_activation_does_not_require_native_focus(setup, monkeypatch):
+    s = setup
+    monkeypatch.setattr(QWidget, "activateWindow", lambda self: None)
+    set_test_active_window(None)
+    assert s.controller.current_window() is None
+    dwell_widget(s, s.window.app_buttons[2])
+    guide = s.window.steamguide_window
+    assert guide.isVisible(), input_state(s)
+    dwell_widget(s, guide.home_button)
+    assert s.window.isVisible(), input_state(s)
 
 
 def test_login_physical_typing_account_dialog_and_logout(setup):
