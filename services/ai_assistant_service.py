@@ -110,6 +110,12 @@ class AIAssistantService:
                         f"{documentation}"
                     ),
                     sources=(section.source,),
+                    spoken_text=(
+                        "The reference documentation does not confirm "
+                        "the specific numerical settings in my answer. "
+                        "Please ask the STEAM Specialist for "
+                        "recommended settings."
+                    ),
                 )
 
             if not answer:
@@ -127,6 +133,7 @@ class AIAssistantService:
             return GuideResponse(
                 markdown=markdown,
                 sources=(section.source,),
+                spoken_text=answer,
             )
 
         except Exception:
