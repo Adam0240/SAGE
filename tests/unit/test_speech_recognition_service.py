@@ -258,3 +258,38 @@ def test_result_callback_error_still_restores_idle_state(harness, monkeypatch):
     assert h.service.start_recording(callback, h.errors.append)
     finish(h)
     assert h.errors == ["callback failed"]
+
+
+def test_microphone_ready_after_three_audio_reads(harness):
+    """Microphone should report ready after 300 ms of captured audio."""
+    h = harness
+    ready_calls = []
+    read_count = 0
+
+    def read(size):
+        nonlocal read_count
+        read_count += 1
+
+        if read_count < 3:
+            assert ready_calls == []
+
+        if read_count == 4:
+            assert ready_calls == ["ready"]
+            h.service.stop_recording()
+
+        return block(), False
+
+    h.stream_factory.return_value = FakeStream(read)
+
+    assert h.service.start_recording(
+        on_result=h.results.append,
+        on_error=h.errors.append,
+        on_ready=lambda: ready_calls.append("ready"),
+    )
+
+    finish(h)
+
+    assert read_count == 4
+    assert ready_calls == ["ready"]
+    assert h.results == ["Hello SAGE."]
+    assert h.errors == []
