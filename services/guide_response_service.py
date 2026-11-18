@@ -90,9 +90,9 @@ class GuideResponseService:
             ),
             sources=(section.source,),
             spoken_text=(
-                f"I found relevant instructions for {topic}. "
-                "Please review the instructions on screen, "
-                "including any safety warnings."
+                f"According to the STEAM Room documentation for "
+                f"{topic.replace(' → ', ', ')}, here are the instructions. "
+                + content
                 + notice
-            ),
+),
         )

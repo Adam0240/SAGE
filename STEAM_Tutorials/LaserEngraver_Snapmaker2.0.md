@@ -150,7 +150,7 @@ Stop the job and check the material placement, design position, and XY starting 
 
 Do not move the object while the engraving is running.
 
-### Luban or LightBurn Cannot Connect
+### Snapmaker Luban or LightBurn Cannot Connect
 
 In the STEAM Room setup, this usually means another application is already using the machine’s connection.
 

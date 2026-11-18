@@ -7,7 +7,6 @@ device read or model operation must return before the worker can finish.
 
 import threading
 import time
-import numpy as np
 
 class SpeechRecognitionService:
     def __init__(
@@ -143,6 +142,8 @@ class SpeechRecognitionService:
         if self._stop_event.is_set():
             return None
 
+        import numpy as np
+        
         factory = self._stream_factory
 
         if factory is None:

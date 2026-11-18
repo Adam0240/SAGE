@@ -248,23 +248,37 @@ class HomeVoiceController(QObject):
         # Stop if text-to-speech is unavailable or fails to start.
         self.stop_thinking_animation()
 
-
     @Slot(int, str)
     def on_speech_failed(self, request_id, error):
-        """Log microphone or recognition errors and restore the button."""
+        """Report microphone or recognition errors and restore the button."""
         if request_id != self._speech_request_id:
             return
 
         self._speech_busy = False
         self.stop_thinking_animation()
         self._set_button("Talk to SAGE", True)
+
+        # Preserve the original error for troubleshooting.
         print(f"Speech recognition error: {error}")
-        self.report_error(error)
+
+        # Provide a user-friendly message for missing microphone devices.
+        if "error querying device" in error.lower():
+            message = (
+                "Unable to access the microphone. "
+                "Please check that it is connected and selected "
+                "as the Windows input device, then try again."
+            )
+        else:
+            message = error
+
+        self.report_error(message)
+
 
     def report_error(self, message):
+        """Send errors to the home screen unless SAGE is closing."""
         if not self._closing:
             self.error_occurred.emit(message)
-
+    
     @Slot(str)
     def on_tts_error(self, error):
         if self._closing or not self._awaiting_tts_completion:

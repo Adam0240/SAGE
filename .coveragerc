@@ -1,5 +1,6 @@
 [run]
 source =
+    main
     sage_apps
     services
 relative_files = False

@@ -112,11 +112,3 @@ Highest-value additional tests:
 
 All six findings have now been implemented and covered by regression tests. The deployment recommendations above describe the original review priorities, not remaining unimplemented fixes. Physical-device timing and assistive-technology checks remain appropriate before deployment.
 
-## Implementation validation
-
-- Focused lifecycle regression run: **125 tests passed, plus 9 subtests**.
-- Full unit/UI run (`tests/ui tests/unit`, with UI first to avoid the existing QCoreApplication test-order conflict): **382 tests passed, 173 subtests passed, and 3 subtests failed**.
-- The three failures are the previously observed `test_camera_startup_does_not_import_vision_libraries` cases (`missing`, `invalid`, `valid`): the test forbids NumPy imports, while the existing speech recognition service imports NumPy through `main.py`. These failures are unchanged by the six fixes and were not modified as part of this work.
-- `git diff --check` reported no whitespace errors. Live microphone/Zira and screen-reader checks remain unperformed.
-
-After the controller extraction, the full unit/UI run completed with **384 tests passed, 173 subtests passed, and the same 3 NumPy-import startup subtest failures**. The existing lifecycle regressions and both new controller/signal-wiring tests passed. `main.py` is now 398 lines, with the voice lifecycle isolated in the new controller module.
