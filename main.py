@@ -3,7 +3,7 @@
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QSize, QTimer
+from PySide6.QtCore import Qt, QSize, QTimer, Slot
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QApplication,
@@ -20,9 +20,11 @@ from sage_apps.account_management_app import AccountManagementDialog
 from sage_apps.gcode_display_print_app import GcodeDisplayPrintApp
 from sage_apps.steamguide_app import SteamGuide_App
 from services.session_service import SessionService
+from services.home_voice_controller import HomeVoiceController
 
 
 class SageWindow(QWidget):
+
     def __init__(self, *, camera_controls=True):
         # Set up the QWidget before adding the SAGE window settings.
         super().__init__()
@@ -30,10 +32,12 @@ class SageWindow(QWidget):
         # Initialize the application in Student Mode.
         self.session_service = SessionService()
         self.session_state = self.session_service.start()
+
         self.gcode_window = None
         self.steamguide_window = None
         self.camera_controller = None
         self._camera_closing = False
+        self._closing = False
         self._auto_camera = camera_controls
         self._camera_start_attempted = False
         self._camera_start_timer = QTimer(self)
@@ -102,7 +106,38 @@ class SageWindow(QWidget):
         )
 
         # Leave a gap between the avatar and the application buttons.
-        main_layout.addSpacing(40)
+        # Add voice interaction controls below the AI avatar.
+        main_layout.addSpacing(20)
+
+        self.talk_button = QPushButton("Talk to SAGE")
+        self.talk_button.setObjectName("talkToSageButton")
+        self.talk_button.setAccessibleName("Talk to SAGE")
+        self.talk_button.setFixedSize(250, 60)
+        self.talk_button.setStyleSheet("""
+            QPushButton {
+                background-color: blue;
+                color: white;
+                border: 2px solid white;
+                border-radius: 15px;
+                font-size: 22px;
+                font-weight: bold;
+            }
+
+            QPushButton:hover {
+                background-color: #3366cc;
+            }
+
+            QPushButton:focus {
+                border-color: red;
+            }
+        """)
+
+        main_layout.addWidget(
+            self.talk_button,
+            alignment=Qt.AlignmentFlag.AlignHCenter,
+        )
+
+        main_layout.addSpacing(20)
 
         # Arrange the three application buttons in a centered row.
         app_layout = QHBoxLayout()
@@ -178,6 +213,29 @@ class SageWindow(QWidget):
         # Leave flexible space below the application buttons.
         main_layout.addStretch(1)
 
+        self.voice_controller = HomeVoiceController(self)
+        self.voice_controller.button_changed.connect(self.update_voice_button)
+        self.voice_controller.avatar_changed.connect(self.avatar.setText)
+        self.voice_controller.error_occurred.connect(self.show_voice_error)
+        self.talk_button.clicked.connect(self.voice_controller.toggle_speech)
+
+
+    @Slot(str, bool)
+    def update_voice_button(self, text, enabled):
+        """Keep the visible and accessible voice states synchronized."""
+        self.talk_button.setText(text)
+        self.talk_button.setAccessibleName(text)
+        self.talk_button.setEnabled(enabled and not self._closing)
+
+    @Slot(str)
+    def show_voice_error(self, message):
+        if self._closing or not self.isVisible():
+            return
+        dialog = QMessageBox(QMessageBox.Icon.Warning, "Voice assistant unavailable",
+                             message, QMessageBox.StandardButton.Ok, self)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialog.open()
+
     def showEvent(self, event):
         super().showEvent(event)
         if self._auto_camera and not self._camera_start_attempted:
@@ -215,6 +273,9 @@ class SageWindow(QWidget):
             self.close()
 
     def handle_mode_button(self):
+        if self._closing:
+            return
+        self.voice_controller.cancel()
         # Clicking the mode button while logged in returns to Student Mode.
         if self.session_state.user_id is not None:
             self.session_state = self.session_service.log_out()
@@ -241,8 +302,10 @@ class SageWindow(QWidget):
 
     def open_account_management(self):
         # Account management is available only during a staff session.
-        if self.session_state.user_id is None:
+        if self._closing or self.session_state.user_id is None:
             return
+
+        self.voice_controller.cancel()
 
         dialog = AccountManagementDialog(
             actor_id=self.session_state.user_id,
@@ -256,6 +319,9 @@ class SageWindow(QWidget):
 
     # Reuse the viewer so returning home does not discard the selected file.
     def open_gcode_app(self):
+        if self._closing:
+            return
+        self.voice_controller.cancel()
         if self.gcode_window is None:
             self.gcode_window = GcodeDisplayPrintApp(parent=self)
             self.gcode_window.setWindowFlag(Qt.WindowType.Window, True)
@@ -267,6 +333,9 @@ class SageWindow(QWidget):
 
     # Reuse the guide so returning home preserves the question and response.
     def open_steamguide_app(self):
+        if self._closing:
+            return
+        self.voice_controller.cancel()
         if self.steamguide_window is None:
             self.steamguide_window = SteamGuide_App(parent=self)
             self.steamguide_window.setWindowFlag(Qt.WindowType.Window, True)
@@ -278,12 +347,17 @@ class SageWindow(QWidget):
 
     # Restore the existing home window and its current login session.
     def show_home(self):
+        if self._closing:
+            return
         self.show()
         self.raise_()
         self.activateWindow()
 
     # Closing SAGE also hides its apps without requesting another return home.
     def closeEvent(self, event):
+        self._closing = True
+        self.setEnabled(False)
+        self.voice_controller.shutdown()
         self._camera_start_timer.stop()
         if self.camera_controller is not None and self.camera_controller.worker is not None:
             self._camera_closing = True
@@ -302,10 +376,14 @@ class SageWindow(QWidget):
             if self.camera_controller is not None and self.camera_controller.worker is not None:
                 self.close()
             else:
+                self._closing = True
+                self.setEnabled(False)
+                self.voice_controller.shutdown()
                 QApplication.quit()
         else:
             # Keep the default behavior for other keys.
             super().keyPressEvent(event)
+
 
 
 if __name__ == "__main__":

@@ -2,13 +2,23 @@
 
 The suite covers login/logout, account CRUD and permissions, database deadlines,
 G-code browsing and asynchronous previews, Markdown retrieval and responses, camera
-tracking/calibration, and dwell input across SAGE. Related cases use pytest
+tracking/calibration, dwell input, local AI responses, and the home voice lifecycle.
+Related cases use pytest
 parameterization or unittest subtests. Database CRUD is checked through the account-operation wrappers instead of
 repeating the same operations in a separate repository test suite.
 
 The test files are grouped by feature:
 
+- `unit/test_speech_recognition_service.py`: mocked capture/transcription, manual
+  stop, cancellation at each processing stage, silence/time limits, resource
+  cleanup, errors/retries, model reuse, and worker callbacks. No microphone,
+  speech dependencies, model download, or network is used; see
+  [speech setup and lifecycle](../services/SPEECH.md).
 - `unit/test_account_service.py`: permissions, validation, and safe account display fields.
+- `unit/test_ai_assistant_service.py`: grounded Ollama responses, documentation fallback,
+  unsupported settings, clarification, and retention of source instructions.
+- `unit/test_text_to_speech_service.py`: voice selection, playback, stop/replay,
+  engine state/error signals, and unavailable voices using a fake speech engine.
 - `unit/test_authentication_service.py`: accepted/rejected login credentials.
 - `unit/test_password_service.py`: hashing, verification, and password changes.
 - `unit/test_database_configuration.py`: required settings, environment overrides,
@@ -23,6 +33,10 @@ The test files are grouped by feature:
 - `unit/test_dwell.py`: one-second activation, target changes, tracking gaps, and repeat prevention.
 - `ui/test_main_window.py`: default UI, login/logout, account access, G-code/Home navigation,
   and repeated staff-dialog password clearing/deletion.
+- `ui/test_home_voice.py`: microphone readiness, button/accessibility states,
+  manual/automatic transcription transitions, AI/TTS responses, playback interruption,
+  delayed handoff replacement, late callbacks/errors, login/logout/navigation/closing,
+  avatar signals, and the extracted controller operating without a window.
 - `ui/test_gcodedisplayapp.py`: G-code discovery, button/keyboard navigation,
   file-list search/selection/cancellation, preview messages/scaling, configurable folder paths,
   responsiveness during slow previews, latest-request handling, cancellation, and viewer destruction.
@@ -65,11 +79,15 @@ Run commands from the repository root using the project's Python environment:
 # Interface tests; database calls are mocked and Qt uses an offscreen platform.
 .\.venv\Scripts\python.exe -m pytest tests/ui -q
 
+# Combined UI and service tests, without PostgreSQL.
+$env:QT_QPA_PLATFORM = 'offscreen'
+.\.venv\Scripts\python.exe -m pytest tests/ui tests/unit -q
+
 # Database integration tests; PostgreSQL and the sage_test database must be available.
 .\.venv\Scripts\python.exe -m pytest tests/integration -q
 
-# Complete suite.
-.\.venv\Scripts\python.exe -m pytest -q
+# Complete suite; requires the separate integration-test database.
+.\.venv\Scripts\python.exe -m pytest tests/ui tests/unit tests/integration -q
 
 # CI collection guard; imports all test modules without executing database tests.
 .\.venv\Scripts\python.exe -m pytest --collect-only --check-collection -q
@@ -77,9 +95,18 @@ Run commands from the repository root using the project's Python environment:
 
 Directory names also supply `unit`, `ui`, and `integration` markers for `pytest -m` selection.
 Selecting `tests/unit` directly avoids importing UI and integration test modules.
+When combining UI and unit tests in one process, run UI first so a `QApplication`
+exists before the TTS unit tests can create a `QCoreApplication`. The latter cannot
+host widgets. The GitHub workflow currently lists unit tests first; its command
+has not yet been aligned with this local ordering workaround.
+
+For coverage collection, XML generation, and scanning, follow
+[Coverage and SonarQube](../README.md#coverage-and-sonarqube). Plain pytest does not
+refresh `coverage.xml`; SonarQube imports that file rather than running the tests.
 
 Unit/UI tests require the installed project dependencies, but no physical webcam,
-projector, downloaded hand model, or saved desk calibration. Camera tests simulate
+projector, downloaded hand model, saved desk calibration, physical microphone,
+Whisper model, Microsoft Zira voice, or running Ollama server. Camera tests simulate
 frames or use fake capture processes; some lifecycle tests spawn real child processes.
 They do not establish hardware accuracy, native title-bar behavior, USB-driver recovery,
 or production storage/network performance. For projector/webcam acceptance checks,
