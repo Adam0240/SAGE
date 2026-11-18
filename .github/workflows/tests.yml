@@ -25,4 +25,4 @@ jobs:
         # Collection imports integration tests without connecting to PostgreSQL.
         run: python -m pytest --collect-only --check-collection -q
       - name: Run unit and UI tests
-        run: python -m pytest tests/unit tests/ui -q
+        run: python -m pytest tests/ui tests/unit -q
