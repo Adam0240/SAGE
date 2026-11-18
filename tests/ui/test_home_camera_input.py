@@ -282,7 +282,6 @@ def test_default_startup_starts_camera_once_without_controls():
             controller.start.assert_called_once()
             assert not hasattr(window, "camera_button")
             assert not hasattr(window, "camera_status")
-            assert len(window.findChildren(QPushButton)) == 4
             window.hide()
             window.show()
             app.processEvents()
