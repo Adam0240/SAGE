@@ -26,3 +26,7 @@ jobs:
         run: python -m pytest --collect-only --check-collection -q
       - name: Run unit and UI tests
         run: python -m pytest tests/ui tests/unit -q
+        - name: Scan Python dependencies for vulnerabilities
+        run: |
+          python -m pip install pip-audit
+          python -m pip_audit -r requirements.txt --progress-spinner off
