@@ -66,3 +66,30 @@ jobs:
           name: SAGE-package
           path: dist/SAGE-*.zip
           if-no-files-found: error
+
+  publish-release:
+    name: Publish SAGE release
+    needs: unit-and-ui
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download successful SAGE build
+        uses: actions/download-artifact@v4
+        with:
+          name: SAGE-package
+          path: dist
+
+      - name: Publish SAGE pre-release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create "build-${{ github.run_number }}" dist/SAGE-*.zip \
+            --target "${{ github.sha }}" \
+            --title "SAGE Automated Build #${{ github.run_number }}" \
+            --notes "Automated SAGE build. Requires Python and project dependencies." \
+            --prerelease
