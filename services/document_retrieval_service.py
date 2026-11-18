@@ -1,8 +1,8 @@
 """Local Markdown retrieval, independent of Qt and response generation."""
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
-import re
 
 
 @dataclass(frozen=True)

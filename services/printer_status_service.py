@@ -2,8 +2,10 @@
 
 import json
 from dataclasses import dataclass
+
 from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
+
 from services.octoprint_config import make_octoprint_request, read_octoprint_config
 
 

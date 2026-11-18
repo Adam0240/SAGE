@@ -4,8 +4,8 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QTimer, Signal, Slot
 
-from services.speech_recognition_service import SpeechRecognitionService
 from services.ai_response_worker import AIResponseLoader
+from services.speech_recognition_service import SpeechRecognitionService
 from services.text_to_speech_service import TextToSpeechService
 
 

@@ -6,7 +6,13 @@ from pathlib import Path
 from PySide6.QtCore import QPointF
 from PySide6.QtGui import QColor, QImage, QPainter, QPen
 
-from services.gcode_parser import read_gcode_coordinates, PreviewCancelled, GcodeTooLargeError
+from services.gcode_parser import (
+    GcodeTooLargeError as GcodeTooLargeError,
+)
+from services.gcode_parser import (
+    PreviewCancelled,
+    read_gcode_coordinates,
+)
 
 
 class UnreadableGcodeError(Exception):

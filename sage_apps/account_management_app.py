@@ -14,7 +14,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
-from database.timeouts import is_database_timeout
 
 from database.account_operations import (
     create_account,
@@ -22,7 +21,7 @@ from database.account_operations import (
     list_accounts,
     update_account,
 )
-
+from database.timeouts import is_database_timeout
 
 ROLE_LABELS = {
     "boss_admin": "Boss Admin",

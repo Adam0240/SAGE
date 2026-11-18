@@ -2,7 +2,6 @@
 
 from dataclasses import dataclass
 
-
 ROLE_LABELS = {
     "boss_admin": "Boss Admin",
     "steam_specialist": "STEAM Specialist",

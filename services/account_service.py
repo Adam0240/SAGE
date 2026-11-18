@@ -4,7 +4,6 @@ from database.models import User
 from database.user_repository import UserRepository
 from services.password_service import PasswordService
 
-
 VALID_ROLES = {"boss_admin", "steam_specialist", "base_specialist"}
 
 

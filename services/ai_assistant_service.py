@@ -1,11 +1,12 @@
 
 """Local AI responses grounded in SAGE's Markdown documentation."""
 
+import re
+
 from ollama import Client
 
 from services.ai_config import load_ai_config
 from services.guide_response_service import GuideResponse, GuideResponseService
-import re
 
 SETTING_PATTERN = re.compile(
     r"(?<![\w.])\d+(?:\.\d+)?\s*"

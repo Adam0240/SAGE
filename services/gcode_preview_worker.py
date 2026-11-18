@@ -1,12 +1,15 @@
 """One background preview at a time, retaining only the latest queued request."""
 
-from queue import Queue, Empty
+from queue import Empty, Queue
 from threading import Event, Thread
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
 from services.gcode_preview_service import (
-    UnreadableGcodeError, NoPreviewableMovementError, GcodeTooLargeError, PreviewCancelled,
+    GcodeTooLargeError,
+    NoPreviewableMovementError,
+    PreviewCancelled,
+    UnreadableGcodeError,
 )
 
 

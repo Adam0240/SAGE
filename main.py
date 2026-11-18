@@ -3,7 +3,7 @@
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QSize, QTimer, Slot
+from PySide6.QtCore import QSize, Qt, QTimer, Slot
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QApplication,
@@ -19,8 +19,8 @@ from login_dialog import LoginDialog
 from sage_apps.account_management_app import AccountManagementDialog
 from sage_apps.gcode_display_print_app import GcodeDisplayPrintApp
 from sage_apps.steamguide_app import SteamGuide_App
-from services.session_service import SessionService
 from services.home_voice_controller import HomeVoiceController
+from services.session_service import SessionService
 
 
 class SageWindow(QWidget):

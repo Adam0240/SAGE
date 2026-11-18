@@ -1,13 +1,19 @@
 # Provides the base widget used to build the G-code display and printing app.
-from PySide6.QtCore import Qt, QTimer, Signal
 import time
 from pathlib import Path
+
+from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtGui import QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
-    QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
-    QDialog, QDialogButtonBox, QListWidget, QLineEdit
-)
-from PySide6.QtGui import (
-    QKeySequence, QShortcut, QPixmap
+    QDialog,
+    QDialogButtonBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
 )
 
 # Keep direct script launches able to import the shared services package.
@@ -15,13 +21,13 @@ if __name__ == "__main__" and __package__ is None:
     import sys
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from sage_apps.octoprint_file_dialog import OctoPrintFileDialog
 from services.gcode_preview_service import GcodePreviewService
-from TouchControls.widgets import scroll_controls
 from services.gcode_preview_worker import PreviewLoader
-from services.printer_status_service import PrinterStatusService
 from services.octoprint_file_service import OctoPrintFileService
 from services.octoprint_print_service import OctoPrintPrintService
-from sage_apps.octoprint_file_dialog import OctoPrintFileDialog
+from services.printer_status_service import PrinterStatusService
+from TouchControls.widgets import scroll_controls
 
 # Normal launches browse OctoPrint. A local override supports standalone fixtures.
 GCODE_DIR = None
@@ -603,6 +609,7 @@ class GcodeDisplayPrintApp(QWidget):
 # Open the app for testing when this file is run directly.
 if __name__ == "__main__":
     import sys
+
     from PySide6.QtWidgets import QApplication
 
     # Create the Qt application that handles window events and user input.

@@ -8,6 +8,7 @@ device read or model operation must return before the worker can finish.
 import threading
 import time
 
+
 class SpeechRecognitionService:
     def __init__(
         self,
