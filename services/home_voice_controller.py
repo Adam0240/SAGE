@@ -224,6 +224,11 @@ class HomeVoiceController(QObject):
 
         print(f"SAGE answer: {answer}")
 
+        self.speak_response(answer)
+
+
+    def speak_response(self, answer):
+        """Speak a response using the text-to-speech service."""
         self._set_button("Talk to SAGE", True)
 
         # Speak the answer using Microsoft Zira.
@@ -243,11 +248,26 @@ class HomeVoiceController(QObject):
 
             self._awaiting_tts_completion = False
         else:
-            self.report_error(self._tts_error or "Text-to-speech is unavailable.")
+            self.report_error(
+                self._tts_error or "Text-to-speech is unavailable."
+            )
 
         # Stop if text-to-speech is unavailable or fails to start.
         self.stop_thinking_animation()
 
+    def speak_startup_greeting(self):
+        """Greet the user when SAGE is initially started."""
+        if self._closing or self.tts_service is None:
+            return
+
+        self.start_thinking_animation()
+
+        self.speak_response(
+            "Hello, and welcome to the STEAM Room. "
+            "I am SAGE, your STEAM Artificial Guidance Expert. "
+            "How can I assist you today?"
+        )
+    
     @Slot(int, str)
     def on_speech_failed(self, request_id, error):
         """Report microphone or recognition errors and restore the button."""

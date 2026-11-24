@@ -10,6 +10,7 @@ import time
 import unittest
 from unittest.mock import patch
 from urllib.parse import unquote, urlsplit
+from services.session_service import SessionService
 
 from PySide6.QtCore import QEvent, QTimer
 from PySide6.QtTest import QTest
@@ -121,7 +122,18 @@ class TestOctoPrintFiles(unittest.TestCase):
         })
         config.start()
         self.addCleanup(config.stop)
-        self.window = GcodeDisplayPrintApp(thumbnail_dir=self.root / "cache")
+        self.session_service = SessionService()
+
+        self.session_state = self.session_service.log_in(
+            user_id=1,
+            user_name="Test Specialist",
+            role="steam_specialist",
+        )
+
+        self.window = GcodeDisplayPrintApp(
+            thumbnail_dir=self.root / "cache",
+            can_start_print=lambda: self.session_state.can_start_print,
+        )
         self.addCleanup(self.close_window)
         self.wait_until(lambda: not self.window.library_loading)
 
@@ -520,3 +532,60 @@ class TestOctoPrintFiles(unittest.TestCase):
         self.window.file_service = OctoPrintFileService(self.root / "cache", self.window)
         QTest.qWait(50)
 
+    def test_only_steam_specialist_can_start_print(self):
+        self.prepare_print()
+
+        for role in ("student", "base_specialist", "boss_admin"):
+            with self.subTest(role=role):
+
+                if role == "student":
+                    self.session_state = self.session_service.log_out()
+                else:
+                    self.session_state = self.session_service.log_in(
+                        user_id=2,
+                        user_name="Test User",
+                        role=role,
+                    )
+
+                self.window._update_print_button()
+
+                self.assertFalse(
+                    self.window.start_print_button.isEnabled()
+                )
+
+                # Verify the UI handler cannot bypass authorization.
+                self.window.start_print()
+
+                # Verify the service cannot bypass authorization.
+                self.window.print_service.start(
+                    self.window.selected_remote_file,
+                    self.window.file_service.library_source,
+                )
+
+                self.assertFalse(self.window.print_service.busy)
+                self.assertEqual(self.posts, [])
+
+        # Verify printing becomes available after specialist login.
+        self.session_state = self.session_service.log_in(
+            user_id=1,
+            user_name="Test Specialist",
+            role="steam_specialist",
+        )
+
+        # Wait for any existing printer status check to finish.
+        self.wait_until(
+            lambda: self.window.printer_status_service.reply is None
+        )
+
+        # Refresh the printer status.
+        self.window.check_printer_status()
+
+        self.wait_until(
+            lambda: self.window.printer_status_service.reply is None
+        )
+
+        self.window._update_print_button()
+
+        self.assertTrue(
+            self.window.start_print_button.isEnabled()
+        )

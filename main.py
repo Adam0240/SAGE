@@ -318,14 +318,25 @@ class SageWindow(QWidget):
             dialog.deleteLater()
 
     # Reuse the viewer so returning home does not discard the selected file.
+    # Reuse the viewer so returning home does not discard the selected file.
     def open_gcode_app(self):
         if self._closing:
             return
+
         self.voice_controller.cancel()
+
         if self.gcode_window is None:
-            self.gcode_window = GcodeDisplayPrintApp(parent=self)
+            self.gcode_window = GcodeDisplayPrintApp(
+                parent=self,
+                can_start_print=lambda: (
+                    not self._closing
+                    and self.session_state.can_start_print
+                ),
+            )
+
             self.gcode_window.setWindowFlag(Qt.WindowType.Window, True)
             self.gcode_window.home_requested.connect(self.show_home)
+
         self.gcode_window.show()
         self.gcode_window.raise_()
         self.gcode_window.activateWindow()
@@ -393,6 +404,11 @@ if __name__ == "__main__":
     # Create the SAGE window and display it.
     window = SageWindow()
     window.show()
+
+    # Provide a voice greeting when SAGE starts.
+    QTimer.singleShot(
+        0, window.voice_controller.speak_startup_greeting
+    )
 
     # Keep the application running so it can respond to user input.
     sys.exit(app.exec())

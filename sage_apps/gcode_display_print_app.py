@@ -42,7 +42,7 @@ class GcodeDisplayPrintApp(QWidget):
     library_changed = Signal()
     library_status_changed = Signal(str)
 
-    def __init__(self, parent=None, *, gcode_dir=None, thumbnail_dir=None):
+    def __init__(self, parent=None, *, gcode_dir=None, thumbnail_dir=None, can_start_print=None,):
         # Set up the QWidget and connect it to a parent widget if one is provided.
         super().__init__(parent)
         self.setProperty("sageTouchWindow", True)
@@ -64,7 +64,7 @@ class GcodeDisplayPrintApp(QWidget):
         self._awaiting_print = False
         self._manual_status = False
         self._status_checked_at = 0.0
-        self.print_service = OctoPrintPrintService(self)
+        self.print_service = OctoPrintPrintService(self, can_start_print=can_start_print)
         self.print_service.completed.connect(self._print_completed)
         self.status_poll_timer = QTimer(self)
         self.status_poll_timer.setInterval(self.STATUS_POLL_INTERVAL_MS)
@@ -283,18 +283,39 @@ class GcodeDisplayPrintApp(QWidget):
 
     def _update_print_button(self):
         status = self.printer_status_service
+
+        authorized = self.print_service.can_start_print()
+
         file_available = (
-            self.gcode_dir is None and self.selected_remote_file is not None
-            and self._file_validated and not self.library_loading and not self.library_message
+            self.gcode_dir is None
+            and self.selected_remote_file is not None
+            and self._file_validated
+            and not self.library_loading
+            and not self.library_message
         )
+
         printer_ready = (
-            status.reply is None and status.status.ready
+            status.reply is None
+            and status.status.ready
             and status.source == self.file_service.library_source
-            and time.monotonic() - self._status_checked_at < self.STATUS_MAX_AGE_SECONDS
+            and time.monotonic() - self._status_checked_at
+            < self.STATUS_MAX_AGE_SECONDS
         )
+
         self.start_print_button.setEnabled(bool(
-            file_available and printer_ready and not self.print_service.busy and not self._awaiting_print
+            authorized
+            and file_available
+            and printer_ready
+            and not self.print_service.busy
+            and not self._awaiting_print
         ))
+
+        # Inform unauthorized users why printing is restricted.
+        self.start_print_button.setToolTip(
+            "Start the selected 3D print."
+            if authorized
+            else "Only the STEAM Specialist can start a 3D print."
+        )
 
     def _library_loaded(self, folders):
         self.library_loading = False

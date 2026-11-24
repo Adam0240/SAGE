@@ -385,3 +385,20 @@ def test_controller_operates_without_a_window(voice):
     finally:
         controller.shutdown()
         controller.deleteLater()
+
+def test_startup_greeting(voice):
+    controller = voice.window.voice_controller
+
+    controller.speak_startup_greeting()
+
+    voice.tts.speak.assert_called_once_with(
+        "Hello, and welcome to the STEAM Room. "
+        "I am SAGE, your STEAM Artificial Guidance Expert. "
+        "How can I assist you today?"
+    )
+
+    assert controller.thinking_timer.isActive()
+
+    controller.on_tts_state_changed("ready")
+
+    assert not controller.thinking_timer.isActive()

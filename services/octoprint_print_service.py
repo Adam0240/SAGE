@@ -13,9 +13,13 @@ class OctoPrintPrintService(QObject):
     # Result: accepted, rejected (definite failure), or unknown (may have started).
     completed = Signal(str, str)
     TIMEOUT_MS = 10000
-
-    def __init__(self, parent=None):
+    
+    def __init__(self, parent=None, *, can_start_print=None):
         super().__init__(parent)
+        self.can_start_print = (
+                can_start_print if can_start_print is not None
+                else lambda: False
+            )
         self.status_service = PrinterStatusService(self)
         self.status_service.completed.connect(self._checked)
         self.manager = QNetworkAccessManager(self)
@@ -30,6 +34,15 @@ class OctoPrintPrintService(QObject):
     def start(self, entry, expected_source):
         if self.busy:
             return
+
+        # Only the STEAM Specialist can start a print.
+        if not self.can_start_print():
+            self.completed.emit(
+                "rejected",
+                "Only the STEAM Specialist can start a 3D print."
+            )
+            return
+        
         if (entry is None or entry.is_folder or entry.origin != "local" or not entry.path
                 or any(part in ("", ".", "..") for part in entry.path.split("/"))
                 or "\\" in entry.path or "\x00" in entry.path):
@@ -56,12 +69,34 @@ class OctoPrintPrintService(QObject):
     def _checked(self, message):
         if not self.busy:
             return
+
+        # Verify permissions again before sending the print command.
+        if not self.can_start_print():
+            self._complete(
+                "rejected",
+                "Only the STEAM Specialist can start a 3D print."
+            )
+            return
+
         if not self.status_service.status.ready:
             self._complete("rejected", message)
             return
-        request = make_octoprint_request(self.config, "/api/files/local/" + self.entry.path)
-        request.setHeader(QNetworkRequest.KnownHeaders.ContentTypeHeader, "application/json")
-        self.reply = self.manager.post(request, json.dumps({"command": "select", "print": True}).encode())
+
+        request = make_octoprint_request(
+            self.config,
+            "/api/files/local/" + self.entry.path
+        )
+
+        request.setHeader(
+            QNetworkRequest.KnownHeaders.ContentTypeHeader,
+            "application/json"
+        )
+
+        self.reply = self.manager.post(
+            request,
+            json.dumps({"command": "select", "print": True}).encode()
+        )
+
         self.reply.finished.connect(self._finished)
         self.timer.start(self.TIMEOUT_MS)
 
