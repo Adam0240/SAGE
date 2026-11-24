@@ -39,6 +39,7 @@ class SpeechRecognitionService:
         self._lock = threading.Lock()
         self._is_recording = False
         self._on_ready = None
+        self.on_captured = lambda: None
 
     def _load_model(self):
         """Load the local speech recognition model when needed."""
@@ -105,6 +106,7 @@ class SpeechRecognitionService:
             if self._cancel_event.is_set():
                 return
 
+            self.on_captured()
             if audio is None:
                 if on_result:
                     on_result("")

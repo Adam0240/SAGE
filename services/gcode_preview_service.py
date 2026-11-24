@@ -1,11 +1,13 @@
 # Generates overhead G-code images and caches them independently of widgets.
 
 import hashlib
+from contextlib import ExitStack
 from pathlib import Path
 
-from PySide6.QtCore import QPointF
+from PySide6.QtCore import QIODevice, QPointF, QSaveFile
 from PySide6.QtGui import QColor, QImage, QPainter, QPen
 
+from services.disk_cache import DiskCache
 from services.gcode_parser import (
     GcodeTooLargeError as GcodeTooLargeError,
 )
@@ -27,9 +29,19 @@ class GcodePreviewService:
     MAX_COORDINATES = 500_000
     def __init__(self, thumbnail_dir):
         self.thumbnail_dir = Path(thumbnail_dir)
+        self.cache = DiskCache(self.thumbnail_dir, "preview", max_bytes=64 * 1024 * 1024, max_files=512)
+        self.source_cache = DiskCache(self.thumbnail_dir / "gcodes", "gcode",
+                                      max_bytes=512 * 1024 * 1024, max_files=128)
 
     # Return a cached or newly rendered image, or raise a defined preview error.
     def get_preview(self, file_path, *, cancel_event=None):
+        with ExitStack() as leases:
+            if (file_path.parent.resolve() == self.source_cache.directory.resolve()
+                    and self.source_cache.pattern.fullmatch(file_path.name)):
+                leases.callback(self.source_cache.pin(file_path))
+            return self._get_preview(file_path, cancel_event, leases)
+
+    def _get_preview(self, file_path, cancel_event, leases):
         def check_cancelled():
             if cancel_event is not None and cancel_event.is_set():
                 raise PreviewCancelled
@@ -48,13 +60,15 @@ class GcodePreviewService:
             )
             preview_id = hashlib.sha256(
                 preview_key.encode("utf-8")
-            ).hexdigest()[:16]
+            ).hexdigest()
 
             # Create the preview folder if it does not already exist.
             self.thumbnail_dir.mkdir(parents=True, exist_ok=True)
             preview_path = self.thumbnail_dir / (
-                f"{file_path.stem}_{preview_id}.png"
+                f"sage-preview-{preview_id}.png"
             )
+            leases.callback(self.cache.pin(preview_path))
+            self.cache.prune()
 
         except OSError:
             # Still allow previews to display if the cache cannot be accessed.
@@ -63,6 +77,7 @@ class GcodePreviewService:
         # Try loading the saved image before reading and drawing the G-code.
         image = QImage()
         if preview_path is not None and image.load(str(preview_path)):
+            self.cache.touch(preview_path)
             return image
 
         try:
@@ -127,6 +142,12 @@ class GcodePreviewService:
         # A failed save does not prevent the current preview from displaying.
         check_cancelled()
         if preview_path is not None:
-            image.save(str(preview_path), "PNG")
+            output = QSaveFile(str(preview_path))
+            if output.open(QIODevice.OpenModeFlag.WriteOnly):
+                if image.save(output, "PNG"):
+                    output.commit()
+                    self.cache.touch(preview_path)
+                else:
+                    output.cancelWriting()
 
         return image

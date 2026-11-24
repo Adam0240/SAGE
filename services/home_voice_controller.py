@@ -5,21 +5,16 @@ from pathlib import Path
 from PySide6.QtCore import QObject, QTimer, Signal, Slot
 
 from services.ai_response_worker import AIResponseLoader
-from services.speech_recognition_service import SpeechRecognitionService
-from services.text_to_speech_service import TextToSpeechService
 from services.octoprint_file_service import OctoPrintFileService
-from services.project_search_service import ProjectSearchService
-from services.voice_command_service import VoiceCommandService
 from services.printer_status_service import PrinterStatusService
+from services.project_search_service import ProjectSearchService
+from services.supervised_speech_service import SupervisedSpeechRecognitionService
+from services.text_to_speech_service import TextToSpeechService
+from services.voice_command_service import VoiceCommandService
 
-class HomeSpeechRecognitionService(SpeechRecognitionService):
-    """Notify the home screen when automatic capture ends, before Whisper runs."""
 
-    def _capture_audio(self):
-        on_captured = self.on_captured
-        audio = super()._capture_audio()
-        on_captured()
-        return audio
+class HomeSpeechRecognitionService(SupervisedSpeechRecognitionService):
+    """Home uses a recoverable process for microphone and model ownership."""
 
 
 class HomeVoiceController(QObject):
@@ -45,6 +40,7 @@ class HomeVoiceController(QObject):
             silence_duration=2.5,
             silence_threshold=0.005,
         )
+        self.destroyed.connect(self.speech_service.shutdown)
         self._speech_request_id = 0
         self._speech_busy = False
 
@@ -596,6 +592,10 @@ class HomeVoiceController(QObject):
         self._speech_busy = False
 
         self._set_button("Talk to SAGE", not self._closing)
+        # Clear the gate before aborting: cancellation may finish a reply inline.
+        # PrinterStatusService rejects replies from cancelled requests by identity.
+        self._printer_status_pending = False
+        self.printer_status_service.cancel()
         self.ai_loader.cancel()
         self._voice_ai_request = 0
 
@@ -631,3 +631,4 @@ class HomeVoiceController(QObject):
         """Prevent new work and cancel the active voice interaction."""
         self._closing = True
         self.cancel()
+        self.speech_service.shutdown()

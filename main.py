@@ -356,7 +356,10 @@ class SageWindow(QWidget):
                     not self._closing
                     and self.session_state.can_start_print
                 ),
+                get_session=lambda: self.session_state,
             )
+            self.gcode_window.print_service.authorization_revoked.connect(
+                self.invalidate_print_session)
 
             self.gcode_window.setWindowFlag(
                 Qt.WindowType.Window, True
@@ -375,6 +378,14 @@ class SageWindow(QWidget):
             self.gcode_window.open_voice_project(*project)
 
         self.hide()
+
+    @Slot(object)
+    def invalidate_print_session(self, session):
+        # A late result must never log out a replacement staff session.
+        if self.session_state is session:
+            self.session_state = self.session_service.log_out()
+            self.mode_button.setText(self.session_state.button_label)
+            self.app_buttons[0].setEnabled(False)
 
     # Reuse the guide so returning home preserves the question and response.
     def open_steamguide_app(self):
@@ -432,6 +443,9 @@ class SageWindow(QWidget):
 
 
 if __name__ == "__main__":
+    # Support the speech subprocess in Windows packaged builds.
+    from multiprocessing import freeze_support
+    freeze_support()
     # Start the Qt application.
     app = QApplication(sys.argv)
 

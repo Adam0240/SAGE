@@ -121,6 +121,18 @@ class TestGcodeNavigation(unittest.TestCase):
         self.assertFalse(self.window.isVisible())
         self.assertFalse(self.window.gcode_window.isVisible())
 
+    def test_viewer_print_revocation_invalidates_launcher_session(self):
+        self.window.session_state = self.window.session_service.log_in(7, "Staff", "steam_specialist")
+        session = self.window.session_state
+        self.window.app_buttons[0].setEnabled(True)
+        self.window.open_gcode_app()
+        service = self.window.gcode_window.print_service
+        self.assertIs(service.get_session(), session)
+        service.authorization_revoked.emit(session)
+        self.assertFalse(service.can_start_print())
+        self.assertEqual(self.window.mode_button.text(), "Student Mode")
+        self.assertFalse(self.window.app_buttons[0].isEnabled())
+
 
 ROLES = (
     ("boss_admin", "Boss Admin"),
@@ -275,6 +287,19 @@ class TestLoginWorkflow(unittest.TestCase):
         with patch("main.AccountManagementDialog", autospec=True) as dialog_class:
             self.window.open_account_management()
             dialog_class.assert_not_called()
+
+    def test_revoked_print_session_returns_to_student_mode_only_for_current_login(self):
+        self.log_in("steam_specialist")
+        revoked = self.window.session_state
+        self.window.invalidate_print_session(revoked)
+        self.assertEqual(self.window.session_state.mode, "student")
+        self.assertEqual(self.window.mode_button.text(), "Student Mode")
+        self.assertFalse(self.window.app_buttons[0].isEnabled())
+        self.log_in("steam_specialist")
+        replacement = self.window.session_state
+        self.window.invalidate_print_session(revoked)
+        self.assertIs(self.window.session_state, replacement)
+        self.assertTrue(self.window.app_buttons[0].isEnabled())
 
     # Tests that account management receives the authenticated ID and role for all staff roles.
     def test_account_dialog_identity(self):

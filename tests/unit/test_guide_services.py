@@ -1,13 +1,55 @@
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 import pytest
 
+from services.ai_assistant_service import AIAssistantService
 from services.document_retrieval_service import DocumentRetrievalService, parse_sections
 from services.guide_response_service import GuideResponseService
 
-
 DOCUMENTS = Path(__file__).resolve().parents[2] / "STEAM_Tutorials"
+
+
+@pytest.mark.parametrize("question, heading, cautions", [
+    ("Snapmaker Luban cannot connect", "Snapmaker Luban or LightBurn Cannot Connect", (
+        "This handoff needs Adam’s supervision.",
+        "Disconnecting the application is not confirmation that the loaded job has stopped.",
+        "confirm that no Luban job remains active and the laser is off.",
+        "Keep the enclosure closed, use the ventilation, and do not leave an engraving unattended.",
+    )),
+    ("The laser engraving is too light", "The Engraving Is Too Light", (
+        "Only use materials approved for laser engraving.",
+        "Keep the enclosure closed, use the ventilation, and do not leave an engraving unattended.",
+        "If you see flames or anything unusual, stop the job and get Adam.",
+        "Check the setup before increasing the power.",
+    )),
+    ("No filament is coming out", "No Filament Is Coming Out", (
+        "The nozzle and bed become hot during operation.",
+        "Keep your hands clear of hot parts and moving components.",
+    )),
+])
+@pytest.mark.parametrize("mode", ["documentation", "generated", "offline"])
+def test_real_tutorial_cautions_reach_display_speech_and_model(question, heading, cautions, mode):
+    retrieval = DocumentRetrievalService(DOCUMENTS)
+    result = retrieval.search(question)
+    assert result.matches[0].section.headings[-1] == heading
+    if mode == "documentation":
+        response = GuideResponseService().respond(question, result)
+    else:
+        client = Mock()
+        client.chat.return_value = SimpleNamespace(message=SimpleNamespace(content="Check the setup."))
+        if mode == "offline":
+            client.chat.side_effect = ConnectionError("Offline")
+        response = AIAssistantService(retrieval, client=client).respond(question)
+        client.chat.assert_called_once()
+        prompt = client.chat.call_args.kwargs["messages"][1]["content"]
+        for caution in cautions:
+            assert caution in prompt
+    assert response.sources == (result.matches[0].section.source,)
+    for caution in cautions:
+        assert caution in response.markdown
+        assert caution in response.spoken_text
 
 
 @pytest.mark.parametrize("question, heading", [

@@ -18,6 +18,48 @@ from services.guide_response_service import GuideResponse
 from shiboken6 import isValid
 
 
+def test_repeated_ai_cancellation_caps_work_across_loaders(guide):
+    release = Event()
+    calls, received, threads = [], [], []
+
+    def held(question, directory, request_id, cancelled, results, shutdown):
+        calls.append(question)
+        release.wait(5)
+        if not cancelled.is_set() and not shutdown.is_set():
+            results.put((request_id, GuideResponse(question)))
+
+    first, second = AIResponseLoader(guide), AIResponseLoader(guide)
+    second.completed.connect(lambda _, response: received.append(response.markdown))
+    try:
+        with patch("services.ai_response_worker.generate_response", side_effect=held):
+            first.submit("one", guide.tutorial_directory)
+            threads.append(first.thread)
+            wait_until(lambda: len(calls) == 1)
+            first.cancel()
+            first.submit("two", guide.tutorial_directory)
+            threads.append(first.thread)
+            wait_until(lambda: len(calls) == 2)
+            first.deleteLater()
+            QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+            for index in range(10):
+                second.submit(f"pending {index}", guide.tutorial_directory)
+                second.cancel()
+            latest = second.submit("latest", guide.tutorial_directory)
+            QTest.qWait(80)
+            assert calls == ["one", "two"]
+            assert second.thread is None and second.busy
+            assert second.pending[0] == latest
+            release.set()
+            wait_until(lambda: received == ["latest"])
+            wait_until(lambda: not second.busy)
+            assert calls == ["one", "two", "latest"]
+    finally:
+        release.set()
+        for thread in threads:
+            thread.join(3)
+        second.cancel()
+
+
 def wait_until(predicate, timeout=3):
     deadline = monotonic() + timeout
     while not predicate() and monotonic() < deadline:

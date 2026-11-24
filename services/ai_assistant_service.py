@@ -93,7 +93,9 @@ class AIAssistantService:
 
             answer = (response.message.content or "").strip()
 
-            # Reject numerical settings absent from the documentation.
+            # This is only an additional screen-summary check, not proof that
+            # arbitrary generated procedures or setting associations are correct.
+            # Speech always uses the original documentation response below.
             unsupported = (
                 extract_settings(answer)
                 - extract_settings(documentation)
@@ -111,12 +113,7 @@ class AIAssistantService:
                         f"{documentation}"
                     ),
                     sources=(section.source,),
-                    spoken_text=(
-                        "The reference documentation does not confirm "
-                        "the specific numerical settings in my answer. "
-                        "Please ask the STEAM Specialist for "
-                        "recommended settings."
-                    ),
+                    spoken_text=fallback.spoken_text,
                 )
 
             if not answer:
@@ -125,6 +122,7 @@ class AIAssistantService:
             # Retain the exact original instructions so AI wording
             # cannot silently replace important safety guidance.
             markdown = (
+                "**AI-generated summary — verify against the original reference below.**\n\n"
                 f"{answer}\n\n"
                 f"---\n\n"
                 f"**Original reference: {section.source}**\n\n"
@@ -134,7 +132,10 @@ class AIAssistantService:
             return GuideResponse(
                 markdown=markdown,
                 sources=(section.source,),
-                spoken_text=answer,
+                # A summary can omit cautions, invent actions, or reuse a valid
+                # number for the wrong setting. Read the complete retrieved
+                # instructions and ancestor guidance, including any read notice.
+                spoken_text=fallback.spoken_text,
             )
 
         except Exception:

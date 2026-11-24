@@ -9,7 +9,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QMessageBox, QDialog
 
 from main import SageWindow
-from services.home_voice_controller import HomeSpeechRecognitionService, HomeVoiceController
+from services.home_voice_controller import HomeVoiceController
 from services.printer_status_service import PrinterStatus
 
 
@@ -160,12 +160,58 @@ def test_navigation_cancels_and_ignores_late_callbacks(voice, destination):
 
 
 def test_capture_adapter_reports_completion_before_transcription():
-    service = HomeSpeechRecognitionService()
+    from services.speech_recognition_service import SpeechRecognitionService
+
+    service = SpeechRecognitionService()
     service.on_captured = Mock()
-    audio = object()
-    with patch("services.home_voice_controller.SpeechRecognitionService._capture_audio", return_value=audio):
-        assert service._capture_audio() is audio
+    with patch.object(service, "_capture_audio", return_value=None):
+        service._record_and_transcribe(None, None)
     service.on_captured.assert_called_once_with()
+
+
+@pytest.mark.parametrize("action", ["open_gcode_app", "open_steamguide_app", "login", "logout",
+                                  "new_turn", "new_status", "close"])
+@pytest.mark.parametrize("phase", ["printer", "job"])
+def test_cancelled_status_cannot_interrupt_navigation_or_new_turn(voice, action, phase):
+    controller = voice.window.voice_controller
+    service = controller.printer_status_service
+    old_reply = Mock()
+    # Hold either stage of the real status service without contacting equipment.
+    with patch.object(service, "check"):
+        controller.check_printer_status()
+    service.reply = old_reply
+    if action in ("login", "logout"):
+        if action == "logout":
+            voice.window.session_state = voice.window.session_service.log_in(7, "Staff", "boss_admin")
+        with patch("main.LoginDialog") as login:
+            login.return_value.exec.return_value = QDialog.DialogCode.Rejected
+            voice.window.handle_mode_button()
+    elif action in ("new_turn", "new_status"):
+        controller.cancel()
+        start(voice)["on_ready"]()
+    else:
+        with patch("main.GcodeDisplayPrintApp"), patch("main.SteamGuide_App"):
+            getattr(voice.window, action)()
+    old_reply.abort.assert_called_once()
+    assert not controller._printer_status_pending
+    before = (voice.window.talk_button.text(), voice.window.talk_button.isEnabled())
+    # The real service must discard the old reply, even after a fresh status starts.
+    if action == "new_status":
+        controller.cancel()
+        with patch.object(service, "check"):
+            controller.check_printer_status()
+        service.reply = Mock()
+        before = (voice.window.talk_button.text(), voice.window.talk_button.isEnabled())
+    if phase == "printer":
+        service._finished(old_reply, None)
+    else:
+        service._job_finished(old_reply, PrinterStatus("busy", busy=True))
+    voice.tts.speak.assert_not_called()
+    assert (voice.window.talk_button.text(), voice.window.talk_button.isEnabled()) == before
+    if action == "new_status":
+        service.status = PrinterStatus("idle", ready=True)
+        service.completed.emit("idle")
+        voice.tts.speak.assert_called_once()
 
 
 @pytest.mark.parametrize("stage", ["thinking", "speaking"])
@@ -403,6 +449,27 @@ def test_startup_greeting(voice):
     controller.on_tts_state_changed("ready")
 
     assert not controller.thinking_timer.isActive()
+
+
+def test_generated_equipment_summary_is_not_sent_to_speech(voice, tmp_path):
+    from services.ai_assistant_service import AIAssistantService
+    from services.document_retrieval_service import DocumentRetrievalService
+
+    (tmp_path / "printer.md").write_text(
+        "# Printer\nStaff supervision is required.\n"
+        "## Filament jam\nStop the printer and ask staff.\n", encoding="utf-8")
+    client = Mock()
+    client.chat.return_value = SimpleNamespace(message=SimpleNamespace(
+        content="Heat the nozzle to 999 C and remove the cover."))
+    response = AIAssistantService(DocumentRetrievalService(tmp_path), client=client).respond("filament jam")
+    start(voice)["on_result"]("filament jam")
+    voice.window.voice_controller.on_voice_ai_response(7, response)
+    voice.tts.speak.assert_called_once_with(response.spoken_text)
+    spoken = voice.tts.speak.call_args.args[0]
+    assert "Staff supervision is required." in spoken
+    assert "Stop the printer and ask staff." in spoken
+    assert "999" not in spoken
+    assert "remove the cover" not in spoken
 
 def test_voice_search_and_open_project(voice):
     from services.octoprint_file_service import RemoteFile

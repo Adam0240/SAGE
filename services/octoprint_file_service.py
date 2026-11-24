@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
@@ -9,6 +10,7 @@ from PySide6.QtCore import QIODevice, QObject, QSaveFile, QTimer, Signal
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 
 from services.octoprint_config import make_octoprint_request, read_octoprint_config
+from services.disk_cache import DiskCache
 
 
 @dataclass(frozen=True)
@@ -63,10 +65,26 @@ def parse_library(payload):
     return folders
 
 
+def file_version(data, entry):
+    """Validate metadata and retain the server's available version evidence."""
+    if (not isinstance(data, dict) or data.get("type") != "machinecode"
+            or data.get("path") != entry.path or data.get("origin", "local") != "local"):
+        raise ValueError("Invalid file metadata")
+    digest, date, size = (data.get(key) for key in ("hash", "date", "size"))
+    valid_hash = isinstance(digest, str) and bool(digest.strip())
+    valid_date = (type(date) is int or type(date) is float and math.isfinite(date)) and date >= 0
+    valid_size = type(size) is int and size >= 0
+    if not valid_hash and not (valid_date and valid_size):
+        return None
+    return (digest if valid_hash else None, date if valid_date else None,
+            size if valid_size else None)
+
+
 class OctoPrintFileService(QObject):
     library_loaded = Signal(object)
     file_ready = Signal(object, object)
     failed = Signal(str, str)
+    version_checked = Signal(bool)
     REQUEST_TIMEOUT_MS = 15000
     DOWNLOAD_TIMEOUT_MS = 120000
     MAX_JSON_BYTES = 16 * 1024 * 1024
@@ -75,9 +93,25 @@ class OctoPrintFileService(QObject):
     def __init__(self, cache_dir, parent=None):
         super().__init__(parent)
         self.cache_dir = Path(cache_dir)
+        self.cache = DiskCache(self.cache_dir, "gcode", max_bytes=512 * 1024 * 1024, max_files=128)
+        self._release_cache = None
+        self.destroyed.connect(self._release_cached_file)
         self.manager = QNetworkAccessManager(self)
         self.active = {}
         self.library_source = ""
+        self.ready_version = None
+
+    def verify_version(self, entry, expected, config):
+        self.cancel("version")
+        if expected is None:
+            self.version_checked.emit(False)
+            return
+
+        def received(body):
+            current = file_version(json.loads(body), entry)
+            self.version_checked.emit(current is not None and current == expected)
+
+        self._get("version", config, "/api/files/local/" + entry.path, received)
 
     def cancel(self, kind=None):
         for name in list(self.active):
@@ -87,6 +121,13 @@ class OctoPrintFileService(QObject):
                 if task["sink"] is not None:
                     task["sink"].cancelWriting()
                 task["reply"].abort()
+        if kind in (None, "file"):
+            self._release_cached_file()
+
+    def _release_cached_file(self):
+        release, self._release_cache = self._release_cache, None
+        if release is not None:
+            release()
 
     def load_library(self):
         self.cancel("library")
@@ -106,6 +147,7 @@ class OctoPrintFileService(QObject):
 
     def fetch_file(self, entry):
         self.cancel("file")
+        self.ready_version = None
         try:
             config = read_octoprint_config()
         except ValueError as error:
@@ -118,26 +160,33 @@ class OctoPrintFileService(QObject):
         # reuse stale cache entries. The API key stays in headers, never cache names.
         def metadata_received(body):
             data = json.loads(body)
-            if (not isinstance(data, dict) or data.get("type") != "machinecode"
-                    or data.get("path") != entry.path or data.get("origin", "local") != "local"):
-                raise ValueError("Invalid file metadata")
+            validated_version = file_version(data, entry)
+
+            def ready(_=None):
+                self.cache.touch(destination)
+                self.cache.prune()
+                self.ready_version = validated_version
+                self.file_ready.emit(entry, destination)
+
             version = [data.get(key) for key in ("hash", "date", "size")]
             identity = [config[0].toString(), entry.origin, entry.path, version]
             digest = hashlib.sha256(json.dumps(identity).encode()).hexdigest()
-            destination = self.cache_dir / (digest + ".gcode")
+            destination = self.cache_dir / ("sage-gcode-" + digest + ".gcode")
             size = data.get("size")
             if type(size) is int and size > self.MAX_DOWNLOAD_BYTES:
                 self.failed.emit("file", "This G-code exceeds the 128 MB preview download limit.")
                 return
+            self._release_cache = self.cache.pin(destination)
+            self.cache.prune()
             # Size alone cannot distinguish two different versions of a file.
-            version_known = bool(data.get("hash")) or type(data.get("date")) in (int, float)
+            version_known = validated_version is not None
             if version_known and destination.is_file():
                 if type(size) is not int or destination.stat().st_size == size:
-                    self.file_ready.emit(entry, destination)
+                    ready()
                     return
             self.cache_dir.mkdir(parents=True, exist_ok=True)
             self._get("file", config, "/downloads/files/local/" + entry.path,
-                      lambda _: self.file_ready.emit(entry, destination),
+                      ready,
                       destination=destination, expected_size=size)
 
         self._get("file", config, "/api/files/local/" + entry.path, metadata_received)
@@ -149,6 +198,7 @@ class OctoPrintFileService(QObject):
             sink = QSaveFile(str(destination), self)
             if not sink.open(QIODevice.OpenModeFlag.WriteOnly):
                 sink.deleteLater()
+                self._release_cached_file()
                 self.failed.emit(kind, "Unable to write the preview cache.")
                 return
         reply = self.manager.get(request)
@@ -206,6 +256,8 @@ class OctoPrintFileService(QObject):
                 sink.deleteLater()
             reply.deleteLater()
             if message:
+                if kind == "file":
+                    self._release_cached_file()
                 self.failed.emit(kind, message)
                 return
             try:
@@ -213,6 +265,8 @@ class OctoPrintFileService(QObject):
             except (ValueError, TypeError, KeyError, RecursionError):
                 self.failed.emit(kind, "OctoPrint returned an invalid file response.")
             except OSError:
+                if kind == "file":
+                    self._release_cached_file()
                 self.failed.emit(kind, "Unable to access the preview cache.")
 
         reply.readyRead.connect(consume)

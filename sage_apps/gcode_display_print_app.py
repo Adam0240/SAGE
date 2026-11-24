@@ -22,6 +22,7 @@ if __name__ == "__main__" and __package__ is None:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sage_apps.octoprint_file_dialog import OctoPrintFileDialog
+from services.disk_cache import user_cache_directory
 from services.gcode_preview_service import GcodePreviewService
 from services.gcode_preview_worker import PreviewLoader
 from services.octoprint_file_service import OctoPrintFileService
@@ -31,7 +32,7 @@ from TouchControls.widgets import scroll_controls
 
 # Normal launches browse OctoPrint. A local override supports standalone fixtures.
 GCODE_DIR = None
-THUMB_DIR = Path(__file__).resolve().parent / "thumbnails"
+THUMB_DIR = user_cache_directory()
 
 # Creates the screen where users will browse G-code files and start prints.
 class GcodeDisplayPrintApp(QWidget):
@@ -42,7 +43,8 @@ class GcodeDisplayPrintApp(QWidget):
     library_changed = Signal()
     library_status_changed = Signal(str)
 
-    def __init__(self, parent=None, *, gcode_dir=None, thumbnail_dir=None, can_start_print=None,):
+    def __init__(self, parent=None, *, gcode_dir=None, thumbnail_dir=None,
+                 can_start_print=None, get_session=None):
         # Set up the QWidget and connect it to a parent widget if one is provided.
         super().__init__(parent)
         self.setProperty("sageTouchWindow", True)
@@ -58,6 +60,7 @@ class GcodeDisplayPrintApp(QWidget):
         self.remote_folders = {"": []}
         self.current_folder = ""
         self.selected_remote_file = None
+        self._preview_version = None
         self._pending_voice_project = None
         self.library_loading = False
         self.library_message = ""
@@ -65,7 +68,8 @@ class GcodeDisplayPrintApp(QWidget):
         self._awaiting_print = False
         self._manual_status = False
         self._status_checked_at = 0.0
-        self.print_service = OctoPrintPrintService(self, can_start_print=can_start_print)
+        self.print_service = OctoPrintPrintService(
+            self, can_start_print=can_start_print, get_session=get_session)
         self.print_service.completed.connect(self._print_completed)
         self.status_poll_timer = QTimer(self)
         self.status_poll_timer.setInterval(self.STATUS_POLL_INTERVAL_MS)
@@ -416,6 +420,7 @@ class GcodeDisplayPrintApp(QWidget):
 
     def _remote_file_ready(self, entry, path):
         if entry == self.selected_remote_file:
+            self._preview_version = self.file_service.ready_version
             self._file_validated = True
             self._update_print_button()
             self.display_gcode_preview(path)
@@ -515,10 +520,18 @@ class GcodeDisplayPrintApp(QWidget):
         self.printer_status_button.setEnabled(False)
         self.start_print_button.setText("Starting…")
         self.print_message_label.hide()
-        self.print_service.start(self.selected_remote_file, self.file_service.library_source)
+        self.print_service.start(self.selected_remote_file, self.file_service.library_source,
+                                 self._preview_version)
         self._update_navigation()
 
     def _print_completed(self, result, message):
+        if result == "file_changed":
+            self._file_validated = False
+            self._preview_version = None
+            self.preview_loader.cancel()
+            self._preview_request = -1
+            self._preview_path = None
+            self.preview_label.setText(message)
         self._awaiting_print = result in ("accepted", "unknown")
         self.start_print_button.setText("Start Print")
         self.printer_status_button.setEnabled(True)
@@ -715,6 +728,7 @@ class GcodeDisplayPrintApp(QWidget):
     def update_selected_file(self):
         selected_file = self.gcode_files[self.current_file_index]
         if self.gcode_dir is None:
+            self._preview_version = None
             self._file_validated = False
             self._update_print_button()
             self.preview_loader.cancel()
