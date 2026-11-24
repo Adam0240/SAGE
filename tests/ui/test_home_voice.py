@@ -402,3 +402,50 @@ def test_startup_greeting(voice):
     controller.on_tts_state_changed("ready")
 
     assert not controller.thinking_timer.isActive()
+
+def test_voice_search_and_open_project(voice):
+    from services.octoprint_file_service import RemoteFile
+
+    w = voice.window
+    controller = w.voice_controller
+
+    folders = {
+        "": [
+            RemoteFile("Anatomical_Heart.gcode"),
+            RemoteFile("Heart_Keychain.gcode"),
+        ]
+    }
+
+    source = "http://test-octoprint:5000"
+
+    with patch.object(
+        controller.project_file_service,
+        "load_library",
+    ) as load_library, patch.object(
+        w,
+        "_open_gcode_app",
+    ) as open_app:
+
+        start(voice)["on_result"](
+            "Do we have a heart model?"
+        )
+
+        load_library.assert_called_once()
+
+        controller.project_file_service.library_source = source
+
+        controller.on_project_library_loaded(folders)
+
+        assert len(controller._project_matches) == 2
+
+        controller.on_tts_state_changed("ready")
+
+        start(voice)["on_result"](
+            "Open the first one."
+        )
+
+        open_app.assert_called_once_with(
+            project=("Anatomical_Heart.gcode", source)
+        )
+
+        voice.ai.submit.assert_not_called()

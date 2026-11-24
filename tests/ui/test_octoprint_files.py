@@ -589,3 +589,57 @@ class TestOctoPrintFiles(unittest.TestCase):
         self.assertTrue(
             self.window.start_print_button.isEnabled()
         )
+
+    def test_open_voice_project(self):
+        source = self.window.file_service.library_source
+
+        self.window.show()
+
+        self.window.open_voice_project(
+            "other/model.gcode",
+            source,
+        )
+
+        self.wait_for_preview()
+
+        self.assertEqual(
+            self.window.selected_remote_file.path,
+            "other/model.gcode",
+        )
+
+        self.assertFalse(
+            self.window.preview_label.pixmap().isNull()
+        )
+
+        # Displaying a project must not start a print.
+        self.assertEqual(self.posts, [])
+
+
+    def test_open_deleted_voice_project(self):
+        source = self.window.file_service.library_source
+
+        del self.files["other/model.gcode"]
+
+        self.window.show()
+
+        self.window.open_voice_project(
+            "other/model.gcode",
+            source,
+        )
+
+        self.wait_for_preview()
+
+        self.assertIsNone(
+            self.window.selected_remote_file
+        )
+
+        self.assertIn(
+            "no longer available",
+            self.window.preview_label.text(),
+        )
+
+        self.assertFalse(
+            self.window.start_print_button.isEnabled()
+        )
+
+        self.assertEqual(self.posts, [])

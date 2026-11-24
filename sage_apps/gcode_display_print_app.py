@@ -58,6 +58,7 @@ class GcodeDisplayPrintApp(QWidget):
         self.remote_folders = {"": []}
         self.current_folder = ""
         self.selected_remote_file = None
+        self._pending_voice_project = None
         self.library_loading = False
         self.library_message = ""
         self._file_validated = False
@@ -321,19 +322,79 @@ class GcodeDisplayPrintApp(QWidget):
         self.library_loading = False
         self.library_message = ""
         self.remote_folders = folders
+
+        # Check for a project requested through voice interaction.
+        if self._pending_voice_project is not None:
+
+            path, source = self._pending_voice_project
+            self._pending_voice_project = None
+
+            # Locate the exact project in the current library.
+            selected_entry = next(
+                (
+                    entry
+                    for entries in folders.values()
+                    for entry in entries
+                    if not entry.is_folder
+                    and entry.path == path
+                ),
+                None,
+            )
+
+            # Verify the project belongs to the same OctoPrint server.
+            if source != self.file_service.library_source:
+                selected_entry = None
+                message = (
+                    "The OctoPrint server has changed. "
+                    "Please search for the project again."
+                )
+            else:
+                message = (
+                    "The requested project is no longer available."
+                )
+
+            if selected_entry is not None:
+                self.select_remote_file(selected_entry)
+            else:
+                self.selected_remote_file = None
+                self._file_validated = False
+                self.current_folder = ""
+                self.gcode_files = []
+                self.current_file_index = 0
+
+                self.filename_label.setText("No file selected")
+                self.preview_label.setText(message)
+
+            self._update_navigation()
+            self.library_changed.emit()
+            return
+
+        # Continue with normal library loading.
         if self.current_folder not in folders:
             self.current_folder = ""
-        self.gcode_files = [entry for entry in folders[self.current_folder] if not entry.is_folder]
+
+        self.gcode_files = [
+            entry
+            for entry in folders[self.current_folder]
+            if not entry.is_folder
+        ]
+
         if self.selected_remote_file in self.gcode_files:
-            self.current_file_index = self.gcode_files.index(self.selected_remote_file)
+            self.current_file_index = self.gcode_files.index(
+                self.selected_remote_file
+            )
         else:
             self.current_file_index = 0
             self.selected_remote_file = None
+
         if self.gcode_files:
             self.update_selected_file()
         else:
             self.filename_label.setText("No file selected")
-            self.preview_label.setText("Open View File List to browse OctoPrint folders.")
+            self.preview_label.setText(
+                "Open View File List to browse OctoPrint folders."
+            )
+
         self._update_navigation()
         self.library_changed.emit()
 
@@ -350,9 +411,38 @@ class GcodeDisplayPrintApp(QWidget):
             self.library_message = message
             self._update_navigation()
             self.library_status_changed.emit(message)
+        if self._pending_voice_project is not None:
+            self._pending_voice_project = None
+            self.filename_label.setText("No file selected")
         self.preview_label.setText(message)
         self._update_print_button()
 
+    def open_voice_project(self, path, source):
+        """Load a project selected through voice interaction."""
+
+        if self.print_service.busy:
+            return
+
+        if self.gcode_dir is not None:
+            self.preview_label.setText(
+                "Voice project selection requires OctoPrint."
+            )
+            return
+
+        # Store the requested project until the library is loaded.
+        self._pending_voice_project = (path, source)
+
+        # Clear the previous selection.
+        self.selected_remote_file = None
+        self._file_validated = False
+        self.gcode_files = []
+        self.current_file_index = 0
+
+        self.filename_label.setText(path)
+
+        # Refresh the library before selecting the requested project.
+        self.load_gcode_files()
+    
     def select_remote_file(self, entry):
         if self.print_service.busy:
             return
@@ -408,6 +498,8 @@ class GcodeDisplayPrintApp(QWidget):
             self.check_printer_status(manual=False)
 
     def _stop_background_work(self):
+        # Cancel any pending voice-selected project.
+        self._pending_voice_project = None
         self.status_poll_timer.stop()
         self.printer_status_service.cancel()
         self.print_service.cancel_preflight()
