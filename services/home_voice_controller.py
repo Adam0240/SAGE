@@ -10,7 +10,7 @@ from services.text_to_speech_service import TextToSpeechService
 from services.octoprint_file_service import OctoPrintFileService
 from services.project_search_service import ProjectSearchService
 from services.voice_command_service import VoiceCommandService
-
+from services.printer_status_service import PrinterStatusService
 
 class HomeSpeechRecognitionService(SpeechRecognitionService):
     """Notify the home screen when automatic capture ends, before Whisper runs."""
@@ -88,6 +88,19 @@ class HomeVoiceController(QObject):
         # Retain search results for follow-up voice commands.
         self._project_matches = []
         self._project_search_source = ""
+
+        # Initialize read-only printer status retrieval.
+        self.printer_status_service = PrinterStatusService(
+            self,
+            include_job=True,
+        )
+
+        self.printer_status_service.completed.connect(
+            self.on_printer_status_completed
+        )
+
+        # Track active printer status requests.
+        self._printer_status_pending = False
 
         # Initialize spoken responses for the home screen.
         self.tts_service = None
@@ -238,6 +251,13 @@ class HomeVoiceController(QObject):
 
         self.start_thinking_animation()
 
+        # Check whether the user is requesting the printer status.
+        if self.voice_command_service.is_printer_status_command(
+            question
+        ):
+            self.check_printer_status()
+            return
+
         # Check whether the user is selecting a previous search result.
         selection = self.voice_command_service.get_project_selection(
             question
@@ -274,6 +294,68 @@ class HomeVoiceController(QObject):
         except Exception as error:
             self.on_speech_failed(request_id, str(error))
 
+    def check_printer_status(self):
+        """Retrieve the current printer status and remaining print time."""
+
+        self._printer_status_pending = True
+
+        self._set_button("Checking printer status...", False)
+
+        print("Retrieving printer status from OctoPrint.")
+
+        self.printer_status_service.check()
+
+
+    @Slot(str)
+    def on_printer_status_completed(self, message):
+        """Provide a spoken response based on the printer status."""
+
+        if self._closing or not self._printer_status_pending:
+            return
+
+        self._printer_status_pending = False
+
+        status = self.printer_status_service.status
+
+        # The printer is connected and ready.
+        if status.ready:
+            response = (
+                "The 3D printer is currently connected and idle. "
+                "There is no active print."
+            )
+
+        # The printer is currently busy.
+        elif status.busy:
+
+            if status.remaining_seconds is not None:
+
+                # Convert the remaining seconds into hours and minutes.
+                total_minutes = (
+                    status.remaining_seconds + 59
+                ) // 60
+
+                hours, minutes = divmod(total_minutes, 60)
+
+                response = (
+                    "The 3D printer is currently busy. "
+                    f"The estimated remaining print time is "
+                    f"{hours} hours and {minutes} minutes."
+                )
+
+            else:
+                response = (
+                    "The 3D printer is currently busy, "
+                    "but the remaining print time is unavailable."
+                )
+
+        # The printer status could not be determined.
+        else:
+            response = message
+
+        print(f"SAGE answer: {response}")
+
+        self.speak_response(response)
+    
     def handle_project_selection(self, selection):
         """Handle a request to display a previous search result."""
 

@@ -50,3 +50,24 @@ def test_project_selection_index(selection, expected):
     service = VoiceCommandService()
 
     assert service.get_selection_index(selection) == expected
+
+@pytest.mark.parametrize(
+    "question, expected",
+    [
+        ("What is the print status?", True),
+        ("Check the printer status.", True),
+        ("Hey SAGE, is the printer busy?", True),
+        ("How much time is left on the print?", True),
+        ("How long until the print is done?", True),
+        ("Why won't the printer connect?", False),
+        ("Find a Pikachu model.", False),
+        ("How do I use Cura?", False),
+        ("Start the print.", False),
+    ],
+)
+def test_printer_status_commands(question, expected):
+    service = VoiceCommandService()
+
+    assert service.is_printer_status_command(
+        question
+    ) == expected

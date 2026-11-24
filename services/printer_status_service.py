@@ -1,7 +1,7 @@
 """Read OctoPrint status asynchronously without issuing printer commands."""
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
@@ -14,6 +14,24 @@ class PrinterStatus:
     message: str
     ready: bool = False
     busy: bool = False
+    remaining_seconds: int | None = None
+
+    @property
+    def remaining_time_message(self):
+        """Format the estimated remaining print time."""
+
+        if self.ready:
+            return "Remaining time: No active print"
+
+        if self.remaining_seconds is None:
+            return "Remaining time: Unavailable"
+
+        # Convert the remaining seconds into hours and minutes.
+        total_minutes = (self.remaining_seconds + 59) // 60
+
+        hours, minutes = divmod(total_minutes, 60)
+
+        return f"Remaining time: {hours}h {minutes}m"
 
 
 def parse_status(code, body):
@@ -46,11 +64,40 @@ def status_message(code, body):
     return parse_status(code, body).message
 
 
+def parse_remaining_time(code, body):
+    """Retrieve the estimated remaining print time from OctoPrint."""
+
+    if code != 200:
+        return None
+
+    try:
+        data = json.loads(body)
+
+        # Only report remaining time for an active or paused print.
+        if data.get("state") not in ("Printing", "Paused"):
+            return None
+
+        remaining = data["progress"]["printTimeLeft"]
+
+        # Verify that OctoPrint returned a valid estimate.
+        if type(remaining) is int and remaining >= 0:
+            return remaining
+
+    except (ValueError, TypeError, KeyError, AttributeError):
+        pass
+
+    return None
+
+
 class PrinterStatusService(QObject):
     completed = Signal(str)
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, include_job=False):
         super().__init__(parent)
+
+        # Determine whether remaining print time should be retrieved.
+        self.include_job = include_job
+
         self.manager = QNetworkAccessManager(self)
         self.reply = None
         self.timer = QTimer(self)
@@ -64,7 +111,9 @@ class PrinterStatusService(QObject):
     def check(self, config=None):
         if self.reply is not None:
             return
+
         self.status = PrinterStatus("Checking printer status…")
+
         try:
             config = config if config is not None else read_octoprint_config()
         except ValueError as error:
@@ -72,18 +121,24 @@ class PrinterStatusService(QObject):
             self.source = ""
             self.completed.emit(str(error))
             return
+
         self.source = config[0].toString()
         request = make_octoprint_request(config, "/api/printer")
         self.timed_out = False
         self.reply = self.manager.get(request)
         reply = self.reply
-        self.reply.finished.connect(lambda: self._finished(reply))
+
+        self.reply.finished.connect(
+            lambda: self._finished(reply, config)
+        )
+
         self.timer.start()
 
     def cancel(self):
         self.timer.stop()
         reply, self.reply = self.reply, None
         self.status = PrinterStatus("Printer status not checked.")
+
         if reply is not None:
             reply.abort()
 
@@ -92,19 +147,97 @@ class PrinterStatusService(QObject):
             self.timed_out = True
             self.reply.abort()
 
-    def _finished(self, reply):
+    def _finished(self, reply, config):
         if reply is not self.reply:
             reply.deleteLater()
             return
+
         self.timer.stop()
         self.reply = None
-        code = reply.attribute(QNetworkRequest.Attribute.HttpStatusCodeAttribute)
+
+        code = reply.attribute(
+            QNetworkRequest.Attribute.HttpStatusCodeAttribute
+        )
+
         if self.timed_out:
-            status = PrinterStatus("Printer status check timed out. Connection and busy status unknown.")
-        elif code is None or (code == 200 and reply.error() != QNetworkReply.NetworkError.NoError):
-            status = PrinterStatus("Cannot reach OctoPrint. Printer connection and busy status unknown.")
+            status = PrinterStatus(
+                "Printer status check timed out. "
+                "Connection and busy status unknown."
+            )
+
+        elif code is None or (
+            code == 200
+            and reply.error()
+            != QNetworkReply.NetworkError.NoError
+        ):
+            status = PrinterStatus(
+                "Cannot reach OctoPrint. "
+                "Printer connection and busy status unknown."
+            )
+
         else:
-            status = parse_status(code, bytes(reply.readAll()))
+            status = parse_status(
+                code,
+                bytes(reply.readAll()),
+            )
+
         reply.deleteLater()
+
+        # Retrieve remaining print time when the printer is busy.
+        if self.include_job and status.busy:
+            request = make_octoprint_request(
+                config,
+                "/api/job",
+            )
+
+            self.timed_out = False
+            self.reply = self.manager.get(request)
+
+            job_reply = self.reply
+
+            job_reply.finished.connect(
+                lambda: self._job_finished(job_reply, status)
+            )
+
+            self.timer.start()
+            return
+
         self.status = status
         self.completed.emit(status.message)
+
+    def _job_finished(self, reply, status):
+        """Process the remaining print time returned by OctoPrint."""
+
+        if reply is not self.reply:
+            reply.deleteLater()
+            return
+
+        self.timer.stop()
+        self.reply = None
+
+        code = reply.attribute(
+            QNetworkRequest.Attribute.HttpStatusCodeAttribute
+        )
+
+        remaining = None
+
+        # Retrieve the estimate if the request completed successfully.
+        if (
+            not self.timed_out
+            and reply.error()
+            == QNetworkReply.NetworkError.NoError
+        ):
+            remaining = parse_remaining_time(
+                code,
+                bytes(reply.readAll()),
+            )
+
+        reply.deleteLater()
+
+        # Preserve the existing printer status and add the remaining time.
+        self.status = replace(
+            status,
+            remaining_seconds=remaining,
+        )
+
+        self.completed.emit(self.status.message)

@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox, QDialog
 
 from main import SageWindow
 from services.home_voice_controller import HomeSpeechRecognitionService, HomeVoiceController
+from services.printer_status_service import PrinterStatus
 
 
 @pytest.fixture
@@ -449,3 +450,65 @@ def test_voice_search_and_open_project(voice):
         )
 
         voice.ai.submit.assert_not_called()
+
+@pytest.mark.parametrize(
+    "status, expected",
+    [
+        (
+            PrinterStatus(
+                "Printer connected — idle",
+                ready=True,
+            ),
+            "There is no active print.",
+        ),
+        (
+            PrinterStatus(
+                "Printer connected — busy",
+                busy=True,
+                remaining_seconds=9300,
+            ),
+            "2 hours and 35 minutes",
+        ),
+        (
+            PrinterStatus(
+                "Printer connected — busy",
+                busy=True,
+            ),
+            "remaining print time is unavailable",
+        ),
+        (
+            PrinterStatus(
+                "Printer disconnected or not operational."
+            ),
+            "Printer disconnected",
+        ),
+    ],
+)
+def test_voice_printer_status(voice, status, expected):
+    controller = voice.window.voice_controller
+
+    with patch.object(
+        controller.printer_status_service,
+        "check",
+    ) as check:
+
+        start(voice)["on_result"](
+            "What is the print status?"
+        )
+
+        check.assert_called_once()
+
+        controller.printer_status_service.status = status
+
+        controller.printer_status_service.completed.emit(
+            status.message
+        )
+
+        response = voice.tts.speak.call_args.args[0]
+
+        assert expected in response
+
+        # Verify that live printer information bypasses Ollama.
+        voice.ai.submit.assert_not_called()
+
+        assert not controller._printer_status_pending

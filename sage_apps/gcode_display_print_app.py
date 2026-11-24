@@ -196,7 +196,7 @@ class GcodeDisplayPrintApp(QWidget):
             alignment=Qt.AlignmentFlag.AlignHCenter
         )
 
-        self.printer_status_service = PrinterStatusService(self)
+        self.printer_status_service = PrinterStatusService(self, include_job=True,)
         self.printer_status_service.completed.connect(self._printer_status_completed)
         self.printer_status_button = QPushButton("Printer Status")
         self.printer_status_button.setFixedSize(300, 55)
@@ -211,6 +211,22 @@ class GcodeDisplayPrintApp(QWidget):
         self.printer_status_label.setWordWrap(True)
         self.printer_status_label.setStyleSheet("color: white; font-size: 18px;")
         self.main_layout.addWidget(self.printer_status_label)
+        # Display the estimated remaining print time.
+        self.remaining_time_label = QLabel(
+            "Remaining time: Unavailable"
+        )
+
+        self.remaining_time_label.setAlignment(
+            Qt.AlignmentFlag.AlignCenter
+        )
+
+        self.remaining_time_label.setWordWrap(True)
+
+        self.remaining_time_label.setStyleSheet(
+            "color: white; font-size: 18px;"
+        )
+
+        self.main_layout.addWidget(self.remaining_time_label)
 
         # Enable only with a validated remote file and a fresh idle status.
         self.start_print_button = QPushButton("Start Print")
@@ -464,13 +480,28 @@ class GcodeDisplayPrintApp(QWidget):
 
     def _printer_status_completed(self, message):
         self._status_checked_at = time.monotonic()
+
         status = self.printer_status_service.status
-        if status.busy or (self._manual_status and status.ready):
+
+        if status.busy or (
+            self._manual_status and status.ready
+        ):
             self._awaiting_print = False
-        if self._manual_status and (status.ready or status.busy):
+
+        if self._manual_status and (
+            status.ready or status.busy
+        ):
             self.print_message_label.hide()
+
         self._manual_status = False
+
         self.printer_status_label.setText(message)
+
+        # Update the estimated remaining print time.
+        self.remaining_time_label.setText(
+            status.remaining_time_message
+        )
+
         self.printer_status_button.setEnabled(True)
         self._update_print_button()
 
@@ -506,6 +537,9 @@ class GcodeDisplayPrintApp(QWidget):
         self.start_print_button.setEnabled(False)
         self.preview_loader.cancel()
         self.file_service.cancel()
+        self.remaining_time_label.setText(
+        "Remaining time: Unavailable"
+    )
 
     # Return to the owning home screen before this window closes.
     def closeEvent(self, event):

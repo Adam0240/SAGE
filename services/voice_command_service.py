@@ -122,3 +122,44 @@ class VoiceCommandService:
         selection = re.sub(r"\s+one$", "", selection)
 
         return selections.get(selection)
+
+    @staticmethod
+    def is_printer_status_command(transcript):
+        """Identify requests for the current printer status."""
+
+        # Normalize the recognized speech.
+        text = transcript.casefold().strip()
+        text = re.sub(r"[^\w\s]", " ", text)
+        text = " ".join(text.split())
+
+        # Remove the optional greeting.
+        text = re.sub(r"^(?:hey\s+)?sage\s+", "", text)
+
+        # Identify supported printer status requests.
+        commands = (
+            "printer status",
+            "print status",
+            "check printer status",
+            "check the printer status",
+            "check print status",
+            "check the print status",
+            "what is the printer status",
+            "what is the print status",
+            "what s the printer status",
+            "what s the print status",
+            "is the printer connected",
+            "is the printer busy",
+            "is the printer printing",
+            "is the printer ready",
+            "how long is left on the print",
+            "how much time is left on the print",
+            "how much time is remaining on the print",
+            "how long until the print is finished",
+            "when will the print be finished",
+            "how long until the print is done",
+            "how much longer until the print is done",
+            "remaining print time",
+            "how much time is remaining",
+        )
+
+        return text in commands
