@@ -1,6 +1,6 @@
 # Account management screen for logged-in SAGE staff.
 
-from PySide6.QtCore import QObject, QThread, Qt, Signal, Slot
+from PySide6.QtCore import QObject, Qt, QThread, Signal, Slot
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
