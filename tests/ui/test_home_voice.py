@@ -1,12 +1,12 @@
 """Home voice controls with audio, AI, and playback isolated."""
 
-from types import SimpleNamespace
 from threading import Thread
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QMessageBox, QDialog
+from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
 
 from main import SageWindow
 from services.home_voice_controller import HomeVoiceController
@@ -46,7 +46,7 @@ def start(voice):
 
 
 @pytest.mark.parametrize("manual_stop", [True, False])
-def test_voice_cycle(voice, manual_stop):
+def test_voice_cycle(voice, manual_stop, capsys):
     w = voice.window
     assert_button(w, "Talk to SAGE", True)
     callbacks = start(voice)
@@ -69,6 +69,8 @@ def test_voice_cycle(voice, manual_stop):
     assert_button(w, "SAGE is thinking...", False)
     assert w.voice_controller.thinking_timer.isActive()
     w.voice_controller.on_voice_ai_response(7, SimpleNamespace(spoken_text="Answer", markdown="Answer"))
+    output = capsys.readouterr().out
+    assert "Help with filament" not in output and "Answer" not in output
     voice.tts.speak.assert_called_once_with("Answer")
     assert_button(w, "Talk to SAGE", True)
     assert w.voice_controller.thinking_timer.isActive()

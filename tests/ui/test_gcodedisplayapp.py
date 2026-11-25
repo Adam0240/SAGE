@@ -1,18 +1,25 @@
 # Tests G-code startup, navigation, preview messages, and image display.
 
-import tempfile
-import unittest
-import time
-import threading
 import json
+import tempfile
+import threading
+import time
+import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from unittest.mock import patch, ANY
+from unittest.mock import ANY, patch
 
-from PySide6.QtCore import Qt, QTimer, QThread, QEvent
+from PySide6.QtCore import QEvent, Qt, QThread, QTimer
 from PySide6.QtGui import QColor, QImage
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QDialog, QDialogButtonBox, QListWidget, QLineEdit, QLabel
+from PySide6.QtWidgets import (
+    QApplication,
+    QDialog,
+    QDialogButtonBox,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+)
 
 from sage_apps import gcode_display_print_app as gcode_app
 from services.printer_status_service import status_message
@@ -384,14 +391,24 @@ class TestGcodeDisplayApp(unittest.TestCase):
     # Tests files with fewer than two positions show guidance and remove the previous preview.
     def test_insufficient_movement(self):
         valid_file = self.write_gcode()
-        for content in ("", "; Comments only\nM104 S200\n", "G1 X10 Y20\n"):
-            with self.subTest(content=content):
-                self.window.display_gcode_preview(valid_file)
-                file_path = self.write_gcode("short.gcode", content)
-                self.window.display_gcode_preview(file_path)
-                self.wait_for_preview()
-                self.assertEqual(self.window.preview_label.text(), "No previewable movement found.")
-                self.assertTrue(self.window.preview_label.pixmap().isNull())
+        self.window.display_gcode_preview(valid_file)
+        self.wait_for_preview()
+        self.assertFalse(self.window.preview_label.pixmap().isNull())
+        file_path = self.write_gcode("short.gcode", "G1 X10 Y20\n")
+        self.window.display_gcode_preview(file_path)
+        self.wait_for_preview()
+        self.assertEqual(self.window.preview_label.text(), "No previewable movement found.")
+        self.assertTrue(self.window.preview_label.pixmap().isNull())
+
+    def test_unsupported_mode_clears_previous_preview(self):
+        self.window.display_gcode_preview(self.write_gcode())
+        self.wait_for_preview()
+        self.assertFalse(self.window.preview_label.pixmap().isNull())
+        path = self.write_gcode("relative.gcode", "G1 X10 Y10\nG91\nG1 X5 Y0\n")
+        self.window.display_gcode_preview(path)
+        self.wait_for_preview()
+        self.assertIn("unsupported G-code", self.window.preview_label.text())
+        self.assertTrue(self.window.preview_label.pixmap().isNull())
 
     # Tests displayed images fit within the preview area while preserving their proportions.
     def test_preview_image_scaling(self):

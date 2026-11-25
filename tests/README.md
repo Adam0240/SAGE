@@ -83,7 +83,9 @@ Run commands from the repository root using the project's Python environment:
 $env:QT_QPA_PLATFORM = 'offscreen'
 .\.venv\Scripts\python.exe -m pytest tests/ui tests/unit -q
 
-# Database integration tests; PostgreSQL and the sage_test database must be available.
+# Disposable local PostgreSQL only; never use deployment credentials/server.
+$env:SAGE_TEST_DATABASE_URL = 'postgresql+psycopg://test_user:test_password@127.0.0.1:TEST_PORT/sage_test'
+# The integration fixture applies Alembic migrations and checks schema drift.
 .\.venv\Scripts\python.exe -m pytest tests/integration -q
 
 # Complete suite; requires the separate integration-test database.
@@ -95,10 +97,8 @@ $env:QT_QPA_PLATFORM = 'offscreen'
 
 Directory names also supply `unit`, `ui`, and `integration` markers for `pytest -m` selection.
 Selecting `tests/unit` directly avoids importing UI and integration test modules.
-When combining UI and unit tests in one process, run UI first so a `QApplication`
-exists before the TTS unit tests can create a `QCoreApplication`. The latter cannot
-host widgets. The GitHub workflow currently lists unit tests first; its command
-has not yet been aligned with this local ordering workaround.
+UI and TTS tests share a session-scoped offscreen `QApplication`. Combined tests can
+run in either order; service-only selections do not construct Qt unless requested.
 
 For coverage collection, XML generation, and scanning, follow
 [Coverage and SonarQube](../README.md#coverage-and-sonarqube). Plain pytest does not
@@ -116,15 +116,14 @@ The collection guard requires at least one collected test from each module liste
 `REQUIRED_TEST_MODULES` in `tests/conftest.py`. It fails for missing, empty, ignored, or
 entirely deselected expected modules. Keep that list current when intentionally adding
 or renaming modules. `.github/workflows/tests.yml` runs the guard and the unit/UI suite
-on Windows with offscreen Qt; PostgreSQL integration tests require a separate local run.
+on Windows with offscreen Qt; a separate disposable PostgreSQL 17 CI job gates release.
 
-Database settings come from the root `.env`, with `POSTGRES_*` environment overrides.
-Unit/UI imports and Student Mode startup do not read or require those settings. Integration tests
-use the same server and credentials with the database changed to `sage_test` and reject a
-matching application database name. Account transaction tests roll back each test's data and
+Application database settings come from `.env` or `POSTGRES_*` overrides. Integration tests
+never inherit those settings: `SAGE_TEST_DATABASE_URL` must explicitly name a local disposable
+`sage_test` database. Account transaction tests roll back each test's data and
 use savepoints so operation wrappers can commit their sessions while an outer transaction
-still removes all test data afterward. Test tables are created from the ORM models;
-these tests do not validate Alembic migration history.
+still removes all test data afterward. The integration session first applies Alembic migrations
+and checks for ORM/schema drift. Concurrency tests use separate generated schemas afterward.
 
 Boss Admin concurrency tests use real commits in a unique temporary schema within
 `sage_test`, isolated from existing accounts. They check that overlapping operations

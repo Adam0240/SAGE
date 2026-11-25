@@ -26,7 +26,7 @@ def generate_response(question, directory, request_id, cancelled, results, shutd
     if cancelled.is_set() or shutdown.is_set():
         return
     try:
-        retrieval = DocumentRetrievalService(directory)
+        retrieval = DocumentRetrievalService(directory, refresh_on_init=False)
 
         try:
             assistant = AIAssistantService(retrieval)

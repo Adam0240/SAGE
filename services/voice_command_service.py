@@ -3,6 +3,13 @@
 import re
 
 
+def _normalize_transcript(transcript, *, join_3d=False):
+    text = transcript.casefold().strip()
+    if join_3d:
+        text = re.sub(r"\b3[\s-]*d\b", "3d", text)
+    text = " ".join(re.sub(r"[^\w\s]", " ", text).split())
+    return re.sub(r"^(?:hey\s+)?sage\s+", "", text)
+
 class VoiceCommandService:
 
     @staticmethod
@@ -10,13 +17,7 @@ class VoiceCommandService:
         """Identify requests to search for saved 3D printing projects."""
 
         # Normalize the recognized speech.
-        text = transcript.casefold().strip()
-        text = re.sub(r"\b3[\s-]*d\b", "3d", text)
-        text = re.sub(r"[^\w\s]", " ", text)
-        text = " ".join(text.split())
-
-        # Remove the optional greeting.
-        text = re.sub(r"^(?:hey\s+)?sage\s+", "", text)
+        text = _normalize_transcript(transcript, join_3d=True)
 
         # Identify requests to locate existing projects.
         prefixes = (
@@ -71,12 +72,7 @@ class VoiceCommandService:
         """Identify a request to display a project."""
 
         # Normalize the recognized speech.
-        text = transcript.casefold().strip()
-        text = re.sub(r"[^\w\s]", " ", text)
-        text = " ".join(text.split())
-
-        # Remove the optional greeting.
-        text = re.sub(r"^(?:hey\s+)?sage\s+", "", text)
+        text = _normalize_transcript(transcript)
 
         # Identify requests to display an existing project.
         prefixes = (
@@ -128,12 +124,7 @@ class VoiceCommandService:
         """Identify requests for the current printer status."""
 
         # Normalize the recognized speech.
-        text = transcript.casefold().strip()
-        text = re.sub(r"[^\w\s]", " ", text)
-        text = " ".join(text.split())
-
-        # Remove the optional greeting.
-        text = re.sub(r"^(?:hey\s+)?sage\s+", "", text)
+        text = _normalize_transcript(transcript)
 
         # Identify supported printer status requests.
         commands = (

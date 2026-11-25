@@ -1,4 +1,3 @@
-import pytest
 import os
 import subprocess
 import sys
@@ -7,15 +6,17 @@ from threading import Event, current_thread, get_ident
 from time import monotonic
 from types import SimpleNamespace
 from unittest.mock import patch
+
+import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, Qt, QTimer
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog, QTextBrowser
+from shiboken6 import isValid
 
-from sage_apps.steamguide_app import SteamGuide_App
 from main import SageWindow
+from sage_apps.steamguide_app import SteamGuide_App
 from services.ai_response_worker import AIResponseLoader
 from services.guide_response_service import GuideResponse
-from shiboken6 import isValid
 
 
 def test_repeated_ai_cancellation_caps_work_across_loaders(guide):

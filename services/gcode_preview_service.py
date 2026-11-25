@@ -54,7 +54,7 @@ class GcodePreviewService:
             # time, and size. Changed details produce a different PNG filename.
             file_details = file_path.stat()
             preview_key = (
-                f"{file_path.resolve()}|"
+                f"absolute-xy-v2|{file_path.resolve()}|"
                 f"{file_details.st_mtime_ns}|"
                 f"{file_details.st_size}"
             )
@@ -144,10 +144,11 @@ class GcodePreviewService:
         if preview_path is not None:
             output = QSaveFile(str(preview_path))
             if output.open(QIODevice.OpenModeFlag.WriteOnly):
-                if image.save(output, "PNG"):
-                    output.commit()
-                    self.cache.touch(preview_path)
-                else:
+                saved = image.save(output, "PNG")
+                if not saved:
                     output.cancelWriting()
+                # commit also closes a cancelled QSaveFile's temporary handle.
+                if output.commit() and saved:
+                    self.cache.touch(preview_path)
 
         return image

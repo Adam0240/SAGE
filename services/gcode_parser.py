@@ -11,6 +11,10 @@ class GcodeTooLargeError(Exception):
     """The preview would exceed its coordinate budget."""
 
 
+class UnsupportedGcodeError(Exception):
+    """Coordinate semantics cannot be represented by this straight-line preview."""
+
+
 def read_gcode_coordinates(file_path, *, cancel_event=None, max_coordinates=None):
     coordinates = []
     x = y = 0.0
@@ -30,7 +34,15 @@ def read_gcode_coordinates(file_path, *, cancel_event=None, max_coordinates=None
             if cancel_event is not None and cancel_event.is_set():
                 raise PreviewCancelled
             # Remove semicolon comments and allow lowercase or indented commands.
-            command = line.split(";", 1)[0].strip().upper()
+            command = re.sub(r"\([^)]*\)", "", line.split(";", 1)[0]).strip().upper()
+            codes = re.findall(r"G\s*(\d+(?:\.\d+)?)", command)
+            if (len(codes) > 1 or re.match(r"N\d", command)
+                    or any(float(code) not in (0, 1, 4, 21, 90, 92) for code in codes)):
+                raise UnsupportedGcodeError
+            if codes and float(codes[0]) == 92:
+                # Extruder-only resets do not affect XY; other resets do.
+                if re.search(r"[XYZ]", command) or not re.search(r"E\s*[-+\d.]", command):
+                    raise UnsupportedGcodeError
 
             # Ignore commands that do not describe straight-line movement.
             if not movement_pattern.match(command):

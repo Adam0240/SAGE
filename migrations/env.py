@@ -5,8 +5,13 @@ from logging.config import fileConfig
 from alembic import context
 from alembic.util import CommandError
 
-from database.connection import Base, DatabaseConfigurationError, get_database_url, get_engine
-from database.models import User
+from database.connection import (
+    Base,
+    DatabaseConfigurationError,
+    get_database_url,
+    get_engine,
+)
+from database.models import User  # noqa: F401 -- register the users table in Base.metadata
 
 config = context.config
 
@@ -31,6 +36,12 @@ def run_migrations_offline():
 
 def run_migrations_online():
     # Apply migrations through a live database connection.
+    supplied = config.attributes.get("connection")
+    if supplied is not None:
+        context.configure(connection=supplied, target_metadata=target_metadata)
+        with context.begin_transaction():
+            context.run_migrations()
+        return
     with get_engine().connect() as connection:
         context.configure(
             connection=connection,

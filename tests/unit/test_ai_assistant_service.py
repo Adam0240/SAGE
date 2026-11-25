@@ -11,7 +11,6 @@ from services.ai_assistant_service import AIAssistantService
 from services.document_retrieval_service import DocumentRetrievalService
 from services.guide_response_service import GuideResponseService
 
-
 DOCUMENTS = Path(__file__).resolve().parents[2] / "STEAM_Tutorials"
 
 

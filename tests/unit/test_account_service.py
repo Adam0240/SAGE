@@ -2,12 +2,12 @@
 
 import unittest
 from unittest.mock import Mock, call, patch
+
+from database.account_operations import list_accounts
 from database.models import User
 from database.user_repository import UserRepository
 from services.account_service import AccountService
 from services.password_service import PasswordService
-from database.account_operations import list_accounts
-
 
 ROLES = ("boss_admin", "steam_specialist", "base_specialist")
 

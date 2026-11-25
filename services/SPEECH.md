@@ -20,11 +20,10 @@ to launch SAGE:
 .\.venv\Scripts\python.exe -c "import sounddevice; from faster_whisper import WhisperModel; print(sounddevice.query_devices())"
 ```
 
-The optional requirements are separate from the application's pinned requirements;
-the mocked tests do not establish a working combination of native dependency
-versions. Validate installation and actual transcription on the deployment Python
-before pinning its speech dependencies. In particular, Python 3.14 compatibility
-must be checked rather than inferred from a package's minimum Python version.
+The optional manifest pins the speech/native versions import-tested on Windows
+Python 3.14. CI installs and audits it alongside the main requirements and checks
+native imports. Mocked tests and successful imports do not establish microphone or
+model transcription behavior; complete the deployment-device acceptance below.
 A separate environment can run the service directly, but the home button's child
 process uses the same Python environment as `main.py`.
 

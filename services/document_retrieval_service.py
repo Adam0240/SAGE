@@ -176,13 +176,14 @@ def parse_sections(filename, markdown):
 
 
 class DocumentRetrievalService:
-    def __init__(self, directory):
+    def __init__(self, directory, *, refresh_on_init=True):
         self.directory = Path(directory)
         self.sections = ()
         self.files = ()
         self.unreadable_files = ()
         self._cache = {}
-        self.refresh()
+        if refresh_on_init:
+            self.refresh()
 
     def refresh(self):
         # These small local documents are read on each query, so same-size edits
@@ -222,6 +223,7 @@ class DocumentRetrievalService:
         query = set(tokens(question))
         specific = query - EQUIPMENT_WORDS
         matches = []
+        query_phrase = " ".join(tokens(question))
         for section in self.sections:
             section_equipment = equipment(section.title)
             if (requested_equipment and section_equipment
@@ -239,7 +241,6 @@ class DocumentRetrievalService:
                 continue
             score = (5 * len(query & heading) + 2 * len(query & body)
                      + len(query & title)) * coverage
-            query_phrase = " ".join(tokens(question))
             if query_phrase and query_phrase in " ".join(tokens(" ".join(section.headings))):
                 score += 3
             matches.append(SectionMatch(section, score))

@@ -9,6 +9,11 @@ from sqlalchemy.exc import SQLAlchemyError
 from database.connection import DatabaseConfigurationError, SessionLocal
 from database.models import User
 from database.user_repository import UserRepository
+from services.identity_validation import (
+    validate_password,
+    validated_name,
+    validated_username,
+)
 from services.password_service import PasswordService
 
 
@@ -33,28 +38,27 @@ def main():
 
     print("Create the first SAGE Boss Admin account.")
 
-    name = input("Full name: ").strip()
-    username = input("Username: ").strip().lower()
+    name = input("Full name: ")
+    username = input("Username: ")
 
     # Validate values against the database field lengths.
-    if not name or len(name) > 100:
-        print("Name must contain between 1 and 100 characters.")
-        return
-
-    if not username or len(username) > 50:
-        print("Username must contain between 1 and 50 characters.")
-        return
-
-    if any(character.isspace() for character in username):
-        print("Username cannot contain spaces.")
+    try:
+        name = validated_name(name)
+        username = validated_username(username,
+            length_message="Username must contain between 1 and 50 characters.",
+            spaces_message="Username cannot contain spaces.")
+    except ValueError as error:
+        print(error)
         return
 
     # Password input is hidden and is never printed or written to a log.
     password = getpass("Password (at least 12 characters): ")
     confirmation = getpass("Confirm password: ")
 
-    if len(password) < 12:
-        print("Password must contain at least 12 characters.")
+    try:
+        validate_password(password)
+    except ValueError as error:
+        print(error)
         return
 
     if password != confirmation:

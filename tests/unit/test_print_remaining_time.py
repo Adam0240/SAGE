@@ -63,20 +63,9 @@ def test_parse_remaining_time(remaining, expected):
     assert parse_remaining_time(200, body) == expected
 
 
-def test_remaining_time_connection_failure():
-    assert parse_remaining_time(409, b"") is None
-
-
-def test_remaining_time_invalid_response():
-    assert parse_remaining_time(200, b"invalid") is None
-
-
-def test_remaining_time_inactive_print():
-    body = json.dumps({
-        "state": "Operational",
-        "progress": {
-            "printTimeLeft": 9300
-        },
-    })
-
-    assert parse_remaining_time(200, body) is None
+@pytest.mark.parametrize("code,body", [
+    (409, b""), (200, b"invalid"),
+    (200, json.dumps({"state": "Operational", "progress": {"printTimeLeft": 9300}})),
+])
+def test_remaining_time_unavailable(code, body):
+    assert parse_remaining_time(code, body) is None

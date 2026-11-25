@@ -2,9 +2,15 @@
 
 from database.models import User
 from database.user_repository import UserRepository
+from services.identity_validation import (
+    validate_password,
+    validated_name,
+    validated_username,
+)
 from services.password_service import PasswordService
+from services.session_service import ROLE_LABELS
 
-VALID_ROLES = {"boss_admin", "steam_specialist", "base_specialist"}
+VALID_ROLES = set(ROLE_LABELS)
 
 
 class AccountService:
@@ -64,24 +70,9 @@ class AccountService:
             raise PermissionError("You cannot create this type of account.")
 
         # Match the limits in the User model and store usernames consistently.
-        name = name.strip()
-        username = username.strip().lower()
-
-        if not name or len(name) > 100:
-            raise ValueError("Name must contain between 1 and 100 characters.")
-
-        if (
-            not username
-            or len(username) > 50
-            or any(character.isspace() for character in username)
-        ):
-            raise ValueError(
-                "Username must contain between 1 and 50 characters "
-                "and cannot contain spaces."
-            )
-
-        if len(password) < 12:
-            raise ValueError("Password must contain at least 12 characters.")
+        name = validated_name(name)
+        username = validated_username(username)
+        validate_password(password)
 
         # Store a password hash, never the password entered in the interface.
         user = User(
@@ -139,26 +130,13 @@ class AccountService:
 
         # Validate all supplied values before changing the account.
         if name is not None:
-            name = name.strip()
-            if not name or len(name) > 100:
-                raise ValueError(
-                    "Name must contain between 1 and 100 characters."
-                )
+            name = validated_name(name)
 
         if username is not None:
-            username = username.strip().lower()
-            if (
-                not username
-                or len(username) > 50
-                or any(character.isspace() for character in username)
-            ):
-                raise ValueError(
-                    "Username must contain between 1 and 50 characters "
-                    "and cannot contain spaces."
-                )
+            username = validated_username(username)
 
-        if password is not None and len(password) < 12:
-            raise ValueError("Password must contain at least 12 characters.")
+        if password is not None:
+            validate_password(password)
 
         # None means leave that field alone. An entered password is hashed
         # before the updated account is sent to the repository.

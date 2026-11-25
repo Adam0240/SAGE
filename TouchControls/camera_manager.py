@@ -6,9 +6,9 @@ SAGE and Qt calibration run this synchronous component in a supervised child pro
 
 import argparse
 import math
-from pathlib import Path
 import sys
 import time
+from pathlib import Path
 
 if __name__ == "__main__" and __package__ is None:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -18,8 +18,8 @@ import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 
-
 from TouchControls.paths import DEFAULT_MODEL_PATH
+
 INDEX_FINGERTIP = 8
 
 

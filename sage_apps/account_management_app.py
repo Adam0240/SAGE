@@ -22,12 +22,7 @@ from database.account_operations import (
     update_account,
 )
 from database.timeouts import is_database_timeout
-
-ROLE_LABELS = {
-    "boss_admin": "Boss Admin",
-    "steam_specialist": "STEAM Specialist",
-    "base_specialist": "Work_Study Assistant",
-}
+from services.session_service import ROLE_LABELS
 
 
 class AccountWorker(QObject):
@@ -374,9 +369,16 @@ class AccountManagementDialog(QDialog):
         operation = self._operation
         result = self._result
 
-        self._thread.deleteLater()
+        # The finished signal may precede deferred worker deletion. Join only
+        # here, after completion, before dropping its Python wrapper references.
+        thread = self._thread
+        if thread is not None:
+            thread.wait()
         self._thread = None
         self._worker = None
+        self._result = None
+        if thread is not None:
+            thread.deleteLater()
         self.tabs.setEnabled(True)
 
         if result is None:

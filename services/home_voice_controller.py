@@ -242,7 +242,6 @@ class HomeVoiceController(QObject):
             self._set_button(self._button_text, True)
             return
 
-        print(f"User: {question}")
         self._set_button("SAGE is thinking...", False)
 
         self.start_thinking_animation()
@@ -348,7 +347,6 @@ class HomeVoiceController(QObject):
         else:
             response = message
 
-        print(f"SAGE answer: {response}")
 
         self.speak_response(response)
     
@@ -399,7 +397,6 @@ class HomeVoiceController(QObject):
     def open_selected_project(self, entry):
         """Request that SAGE display the selected OctoPrint project."""
 
-        print(f"Opening saved project: {entry.path}")
 
         self.project_open_requested.emit(
             entry.path,
@@ -418,7 +415,6 @@ class HomeVoiceController(QObject):
 
         self._set_button("Searching projects...", False)
 
-        print(f"Searching saved projects for: {query}")
 
         self.project_file_service.load_library()
 
@@ -459,7 +455,6 @@ class HomeVoiceController(QObject):
             matches,
         )
 
-        print(f"SAGE answer: {response}")
 
         self.speak_response(response)
 
@@ -495,7 +490,6 @@ class HomeVoiceController(QObject):
 
         answer = response.spoken_text or response.markdown
 
-        print(f"SAGE answer: {answer}")
 
         self.speak_response(answer)
 

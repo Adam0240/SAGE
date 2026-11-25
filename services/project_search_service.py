@@ -39,9 +39,7 @@ class ProjectSearchService:
                     continue
 
                 # Remove the G-code file extension.
-                normalized_path = self.normalize(
-                    str(PurePosixPath(entry.path).with_suffix(""))
-                )
+                normalized_path = self.normalized_path(entry)
 
                 # Match project names and their containing folders.
                 if query_words.issubset(
@@ -64,13 +62,12 @@ class ProjectSearchService:
             return []
 
         # Prefer an exact project name or path.
+        paths = [(entry, self.normalized_path(entry)) for entry in matches]
         exact_matches = [
-            entry for entry in matches
+            entry for entry, path in paths
             if normalized_selection in (
                 self.normalize(PurePosixPath(entry.name).stem),
-                self.normalize(
-                    str(PurePosixPath(entry.path).with_suffix(""))
-                ),
+                path,
             )
         ]
 
@@ -81,17 +78,12 @@ class ProjectSearchService:
         query_words = set(normalized_selection.split())
 
         return [
-            entry for entry in matches
-            if query_words.issubset(
-                set(
-                    self.normalize(
-                        str(
-                            PurePosixPath(entry.path).with_suffix("")
-                        )
-                    ).split()
-                )
-            )
+            entry for entry, path in paths
+            if query_words.issubset(set(path.split()))
         ]
+
+    def normalized_path(self, entry):
+        return self.normalize(str(PurePosixPath(entry.path).with_suffix("")))
 
     def create_response(self, query, matches):
         """Create a spoken response based on actual search results."""
@@ -103,12 +95,7 @@ class ProjectSearchService:
             )
 
         # Include folder names to distinguish similarly named files.
-        names = [
-            self.normalize(
-                str(PurePosixPath(entry.path).with_suffix(""))
-            )
-            for entry in matches
-        ]
+        names = [self.normalized_path(entry) for entry in matches]
 
         if len(matches) == 1:
             return (

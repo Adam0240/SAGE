@@ -209,8 +209,9 @@ class TestLoginThreadLifecycle(unittest.TestCase):
 
     # Timeout errors close the session, restore controls, permit dismissal, and allow a new login.
     def test_database_timeouts_allow_close_and_retry(self):
-        from psycopg.errors import QueryCanceled, LockNotAvailable
+        from psycopg.errors import LockNotAvailable, QueryCanceled
         from sqlalchemy.exc import OperationalError
+
         from database.timeouts import DatabaseWaitTimeout
         for error in (QueryCanceled, LockNotAvailable, DatabaseWaitTimeout):
             with self.subTest(error=error.__name__):

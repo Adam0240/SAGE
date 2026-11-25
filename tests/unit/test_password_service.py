@@ -1,12 +1,13 @@
 # Tests password hashing, verification, and replacing login credentials.
 
 import unittest
-from services.password_service import PasswordService
 from unittest.mock import Mock
+
 from database.models import User
 from database.user_repository import UserRepository
 from services.account_service import AccountService
 from services.authentication_service import AuthenticationService
+from services.password_service import PasswordService
 
 
 class TestPasswordService(unittest.TestCase):

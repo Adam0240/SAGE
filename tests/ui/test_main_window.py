@@ -1,18 +1,20 @@
 # Tests default window behavior and login/logout workflows with dialogs mocked.
 
-import unittest
 import tempfile
+import unittest
 from pathlib import Path
 from unittest.mock import patch
+
 import pytest
-from PySide6.QtCore import Qt, QTimer, QEvent
+from PySide6.QtCore import QEvent, Qt, QTimer
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog, QLineEdit
 from shiboken6 import isValid
+
 from login_dialog import LoginDialog
-from sage_apps.account_management_app import AccountManagementDialog
 from main import SageWindow
 from sage_apps import gcode_display_print_app as gcode_app
+from sage_apps.account_management_app import AccountManagementDialog
 
 
 class TestStartup(unittest.TestCase):

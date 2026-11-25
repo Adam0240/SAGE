@@ -5,7 +5,6 @@ from sqlalchemy.orm import Session
 
 from database.models import User
 
-
 # PostgreSQL's two-integer advisory-lock namespace: "SAGE", active boss status.
 # Every deletion, demotion, or future deactivation must use this same key.
 BOSS_ADMIN_STATUS_LOCK = (0x53414745, 1)

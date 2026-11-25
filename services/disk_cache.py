@@ -13,7 +13,8 @@ _ACTIVE = {}
 
 
 def user_cache_directory():
-    return Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.GenericCacheLocation)) / "SAGE"
+    location = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.GenericCacheLocation)
+    return (Path(location) if location else Path.home() / ".cache") / "SAGE"
 
 
 class DiskCache:

@@ -7,18 +7,23 @@ def test_search_saved_projects():
 
     folders = {
         "": [
-            RemoteFile("Anatomy", is_folder=True),
+            RemoteFile("Heart", is_folder=True),
             RemoteFile("Heart_Keychain.gcode"),
         ],
         "Anatomy": [
-            RemoteFile("Anatomy/Anatomical_Heart.gcode"),
+            RemoteFile("Anatomy/AnatomicalHeart.gcode"),
             RemoteFile("Anatomy/Human_Brain.gcode"),
         ],
     }
 
     matches = service.search("heart", folders)
 
-    assert len(matches) == 2
+    assert [entry.path for entry in matches] == [
+        "Anatomy/AnatomicalHeart.gcode", "Heart_Keychain.gcode"]
+    assert service.search("", folders) == []
+    assert service.search("gcode", folders) == []
+    assert [entry.path for entry in service.search("anatomical heart", folders)] == [
+        "Anatomy/AnatomicalHeart.gcode"]
 
 
 def test_search_is_case_insensitive():
@@ -87,3 +92,12 @@ def test_ambiguous_project_selection():
     results = service.find_selection("heart", matches)
 
     assert len(results) == 2
+
+
+def test_response_limits_spoken_options_and_offers_narrowing():
+    service = ProjectSearchService()
+    entries = [RemoteFile(f"Heart_{index}.gcode") for index in range(4)]
+    response = service.create_response("heart", entries)
+    assert "4 saved projects" in response
+    assert "Option 1: heart 0" in response and "Option 3: heart 2" in response
+    assert "Option 4" not in response and "narrow your search" in response

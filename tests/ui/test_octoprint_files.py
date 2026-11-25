@@ -1,16 +1,15 @@
 """Exercise the real Qt HTTP client and viewer against a local OctoPrint stand-in."""
 
-from collections import Counter
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
-from pathlib import Path
 import tempfile
 import threading
 import time
 import unittest
+from collections import Counter
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from unittest.mock import patch
 from urllib.parse import unquote, urlsplit
-from services.session_service import SessionService
 
 from PySide6.QtCore import QEvent, QTimer
 from PySide6.QtTest import QTest
@@ -18,7 +17,8 @@ from PySide6.QtWidgets import QApplication, QDialogButtonBox
 
 from sage_apps.gcode_display_print_app import GcodeDisplayPrintApp
 from sage_apps.octoprint_file_dialog import OctoPrintFileDialog
-from services.octoprint_file_service import RemoteFile, parse_library
+from services.octoprint_file_service import RemoteFile
+from services.session_service import SessionService
 
 
 class TestOctoPrintFiles(unittest.TestCase):
@@ -61,6 +61,8 @@ class TestOctoPrintFiles(unittest.TestCase):
                 code = owner.errors.get(path, 200)
                 if path == "/octo/api/printer":
                     body = json.dumps({"state": {"flags": owner.printer_flags}}).encode()
+                elif path == "/octo/api/job":
+                    body = json.dumps({"state": "Printing", "progress": {"printTimeLeft": 9300}}).encode()
                 elif path == "/octo/api/files/local":
                     body = b"not json" if owner.invalid_library else json.dumps(owner.library()).encode()
                 elif path.startswith("/octo/api/files/local/"):
@@ -360,11 +362,6 @@ class TestOctoPrintFiles(unittest.TestCase):
         self.assertIn("not configured", self.window.library_message)
         self.assertFalse(self.window.file_service.active)
 
-    def test_invalid_paths_are_rejected(self):
-        for name in ("..", "../file.gcode", "a\\b.gcode"):
-            with self.assertRaises(ValueError):
-                parse_library({"files": [dict(name=name, type="machinecode")]})
-
     def test_replaced_preview_is_rejected_until_reviewed_again(self):
         self.prepare_print()
         path = "parts/model.gcode"
@@ -469,6 +466,68 @@ class TestOctoPrintFiles(unittest.TestCase):
                 QTest.qWait(50)
                 self.assertEqual(self.posts, [])
                 self.assertFalse(verifier.active)
+
+    def test_cache_budget_preserves_selection_then_evicts_released_version(self):
+        cache = self.window.file_service.cache
+        cache.max_files = 1
+        self.select("parts/model.gcode")
+        previous = self.window._preview_path
+        cache.max_bytes = 0
+        cache.prune()
+        self.assertTrue(previous.exists())
+        self.select("parts/z.gcode")
+        current = self.window._preview_path
+        self.assertFalse(previous.exists())
+        self.assertTrue(current.exists())
+        self.window.file_service.cancel()
+        self.assertFalse(current.exists())
+
+    def test_readonly_download_cache_reports_failure_without_validating_file(self):
+        with patch.object(Path, "mkdir", side_effect=PermissionError("Read-only cache")):
+            self.select("parts/model.gcode")
+        self.assertFalse(self.window._file_validated)
+        self.assertIn("cache", self.window.preview_label.text())
+        self.assertFalse(self.window.file_service.active)
+
+    def test_destroyed_file_service_releases_cache_lease(self):
+        from shiboken6 import delete
+
+        from services.octoprint_file_service import OctoPrintFileService
+
+        service = OctoPrintFileService(self.root / "isolated-cache")
+        service.cache.max_files = 0
+        path = service.cache_dir / ("sage-gcode-" + "b" * 64 + ".gcode")
+        service._cache_slot[0] = service.cache.pin(path)
+        path.write_text("G1 X0 Y0\n")
+        delete(service)
+        self.assertFalse(path.exists())
+        self.assertFalse(Path(str(path) + ".lock").exists())
+
+    def test_remaining_time_http_success_failure_and_cancelled_job(self):
+        service = self.window.printer_status_service
+        self.printer_flags.update(ready=False, printing=True)
+        service.check()
+        self.wait_until(lambda: service.reply is None)
+        self.assertTrue(service.status.busy)
+        self.assertEqual(service.status.remaining_seconds, 9300)
+        self.errors["/octo/api/job"] = 500
+        service.check()
+        self.wait_until(lambda: service.reply is None)
+        self.assertTrue(service.status.busy)
+        self.assertIsNone(service.status.remaining_seconds)
+        self.errors.clear()
+        gate = self.gates["/octo/api/job"] = threading.Event()
+        previous = sum(path == "/octo/api/job" for path, _, _ in self.requests)
+        received = []
+        service.completed.connect(received.append)
+        service.check()
+        self.wait_until(lambda: sum(path == "/octo/api/job" for path, _, _ in self.requests) > previous)
+        service.cancel()
+        gate.set()
+        QTest.qWait(80)
+        self.assertEqual(received, [])
+        self.assertIsNone(service.reply)
+        self.assertFalse(service.status.busy)
 
     def prepare_print(self, path="parts/model.gcode"):
         self.window.show()

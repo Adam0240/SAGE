@@ -1,11 +1,11 @@
 """Standalone four-point calibration with five independent accuracy checks."""
 
 import argparse
-from collections import deque
 import math
-from pathlib import Path
 import sys
 import time
+from collections import deque
+from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
@@ -15,11 +15,16 @@ from PySide6.QtWidgets import QApplication, QWidget
 if __name__ == "__main__" and __package__ is None:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from TouchControls.paths import DEFAULT_MODEL_PATH
-from TouchControls.camera_worker import CameraWorker
 from TouchControls.calibration import (
-    Calibration, DEFAULT_CALIBRATION_PATH, check_points, fit_mapping, project, target_points,
+    DEFAULT_CALIBRATION_PATH,
+    Calibration,
+    check_points,
+    fit_mapping,
+    project,
+    target_points,
 )
+from TouchControls.camera_worker import CameraWorker
+from TouchControls.paths import DEFAULT_MODEL_PATH
 
 
 class CalibrationWindow(QWidget):

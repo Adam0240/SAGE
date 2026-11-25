@@ -9,8 +9,8 @@ from pathlib import Path, PurePosixPath
 from PySide6.QtCore import QIODevice, QObject, QSaveFile, QTimer, Signal
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 
-from services.octoprint_config import make_octoprint_request, read_octoprint_config
 from services.disk_cache import DiskCache
+from services.octoprint_config import make_octoprint_request, read_octoprint_config
 
 
 @dataclass(frozen=True)
@@ -80,6 +80,12 @@ def file_version(data, entry):
             size if valid_size else None)
 
 
+def _release_cache_slot(slot):
+    release, slot[0] = slot[0], None
+    if release is not None:
+        release()
+
+
 class OctoPrintFileService(QObject):
     library_loaded = Signal(object)
     file_ready = Signal(object, object)
@@ -94,8 +100,10 @@ class OctoPrintFileService(QObject):
         super().__init__(parent)
         self.cache_dir = Path(cache_dir)
         self.cache = DiskCache(self.cache_dir, "gcode", max_bytes=512 * 1024 * 1024, max_files=128)
-        self._release_cache = None
-        self.destroyed.connect(self._release_cached_file)
+        self._cache_slot = [None]
+        # Destruction must release Python-owned leases without calling this QObject.
+        slot = self._cache_slot
+        self.destroyed.connect(lambda: _release_cache_slot(slot))
         self.manager = QNetworkAccessManager(self)
         self.active = {}
         self.library_source = ""
@@ -125,9 +133,7 @@ class OctoPrintFileService(QObject):
             self._release_cached_file()
 
     def _release_cached_file(self):
-        release, self._release_cache = self._release_cache, None
-        if release is not None:
-            release()
+        _release_cache_slot(self._cache_slot)
 
     def load_library(self):
         self.cancel("library")
@@ -176,7 +182,7 @@ class OctoPrintFileService(QObject):
             if type(size) is int and size > self.MAX_DOWNLOAD_BYTES:
                 self.failed.emit("file", "This G-code exceeds the 128 MB preview download limit.")
                 return
-            self._release_cache = self.cache.pin(destination)
+            self._cache_slot[0] = self.cache.pin(destination)
             self.cache.prune()
             # Size alone cannot distinguish two different versions of a file.
             version_known = validated_version is not None
@@ -263,6 +269,8 @@ class OctoPrintFileService(QObject):
             try:
                 callback(bytes(task["body"]))
             except (ValueError, TypeError, KeyError, RecursionError):
+                if kind == "file":
+                    self._release_cached_file()
                 self.failed.emit(kind, "OctoPrint returned an invalid file response.")
             except OSError:
                 if kind == "file":

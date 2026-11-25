@@ -12,10 +12,10 @@ from PySide6.QtWidgets import (
 from sqlalchemy.exc import SQLAlchemyError
 
 from database.connection import DatabaseConfigurationError, SessionLocal
+from database.timeouts import is_database_timeout
 from database.user_repository import UserRepository
 from services.authentication_service import AuthenticationService
 from services.password_service import PasswordService
-from database.timeouts import is_database_timeout
 
 
 class LoginWorker(QObject):

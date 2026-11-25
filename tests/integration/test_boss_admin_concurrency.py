@@ -12,18 +12,16 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.schema import CreateSchema, DropSchema
 
 from database import account_operations
-from database.connection import Base, get_database_url
+from database.connection import Base
 from database.models import User
 from database.user_repository import UserRepository
 from services.password_service import PasswordService
+from tests.integration.database_support import integration_url
 
 
 class TestBossAdminConcurrency(unittest.TestCase):
     def setUp(self):
-        database_url = get_database_url()
-        test_url = database_url.set(database="sage_test")
-        if test_url.database == database_url.database:
-            raise RuntimeError("The application and test databases must be different.")
+        test_url = integration_url()
         self.engine = create_engine(
             test_url,
             isolation_level="READ COMMITTED",
