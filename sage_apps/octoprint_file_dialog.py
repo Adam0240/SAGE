@@ -23,16 +23,19 @@ class OctoPrintFileDialog(QDialog):
         self.folder = viewer.current_folder
         self.selected_file = None
         self.setWindowTitle("OctoPrint G-code Files")
-        self.resize(700, 500)
+        self.resize(1920, 1080)
+        self.setWindowState(Qt.WindowState.WindowFullScreen)
         self.setStyleSheet(
             "QDialog { background-color: black; }"
             "QLabel, QLineEdit, QListWidget, QPushButton { color: white; font-size: 18px; }"
             "QLineEdit, QListWidget { background-color: black; border: 1px solid white; }"
+            "QLineEdit, QListWidget { selection-background-color: #245a81; selection-color: white; }"
+            "QLineEdit { placeholder-text-color: #bbbbbb; }"
             "QLineEdit, QPushButton { padding: 8px; }"
             "QPushButton { border: 1px solid white; border-radius: 6px; }"
             "QPushButton:disabled { color: gray; border-color: gray; }"
             "QListWidget::item { padding: 8px; }"
-            "QListWidget::item:selected { background-color: #245a81; }"
+            "QListWidget::item:selected { background-color: #245a81; color: white; }"
         )
         layout = QVBoxLayout(self)
         navigation = QHBoxLayout()

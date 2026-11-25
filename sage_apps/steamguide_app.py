@@ -331,6 +331,7 @@ class SteamGuide_App(QWidget):
         dialog = QDialog(self)
         dialog.setWindowTitle(file_path.name)
         dialog.resize(750, 600)
+        dialog.setWindowState(Qt.WindowState.WindowFullScreen)
 
         layout = QVBoxLayout(dialog)
 
@@ -365,5 +366,5 @@ class SteamGuide_App(QWidget):
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = SteamGuide_App()
-    window.show()
+    window.showFullScreen()
     sys.exit(app.exec())

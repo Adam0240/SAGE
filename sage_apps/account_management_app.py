@@ -1,6 +1,6 @@
 # Account management screen for logged-in SAGE staff.
 
-from PySide6.QtCore import QObject, QThread, Signal, Slot
+from PySide6.QtCore import QObject, QThread, Qt, Signal, Slot
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -88,6 +88,7 @@ class AccountManagementDialog(QDialog):
 
         self.setWindowTitle("Account Management")
         self.setMinimumWidth(450)
+        self.setWindowState(Qt.WindowState.WindowFullScreen)
 
         layout = QVBoxLayout(self)
         self.tabs = QTabWidget()
@@ -111,7 +112,7 @@ class AccountManagementDialog(QDialog):
         layout.addWidget(self.close_button)
 
         self.setStyleSheet("""
-            QDialog {
+            QWidget {
                 background-color: black;
                 color: white;
             }
@@ -124,8 +125,19 @@ class AccountManagementDialog(QDialog):
             QLineEdit, QComboBox {
                 background-color: #222222;
                 color: white;
+                selection-background-color: #245a81;
+                selection-color: white;
                 border: 1px solid #777777;
                 padding: 6px;
+            }
+            QLineEdit {
+                placeholder-text-color: #bbbbbb;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #222222;
+                color: white;
+                selection-background-color: #245a81;
+                selection-color: white;
             }
             QPushButton {
                 background-color: blue;

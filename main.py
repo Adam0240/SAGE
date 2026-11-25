@@ -47,7 +47,7 @@ class SageWindow(QWidget):
         # Set the window title, starting size, and background color.
         self.setWindowTitle("SAGE")
         self.resize(1280, 720)
-        self.setStyleSheet("background-color: black;")
+        self.setStyleSheet("QWidget { background-color: black; color: white; }")
 
         # Arrange the main parts of the screen from top to bottom.
         main_layout = QVBoxLayout(self)
@@ -95,6 +95,7 @@ class SageWindow(QWidget):
         self.avatar.setFixedSize(200, 200)
         self.avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.avatar.setStyleSheet("""
+            color: white;
             border: 4px solid white;
             border-radius: 100px;
             font-size: 24px;
@@ -369,7 +370,7 @@ class SageWindow(QWidget):
                 self.show_home
             )
 
-        self.gcode_window.show()
+        self.gcode_window.showFullScreen()
         self.gcode_window.raise_()
         self.gcode_window.activateWindow()
 
@@ -396,7 +397,7 @@ class SageWindow(QWidget):
             self.steamguide_window = SteamGuide_App(parent=self)
             self.steamguide_window.setWindowFlag(Qt.WindowType.Window, True)
             self.steamguide_window.home_requested.connect(self.show_home)
-        self.steamguide_window.show()
+        self.steamguide_window.showFullScreen()
         self.steamguide_window.raise_()
         self.steamguide_window.activateWindow()
         self.hide()
@@ -405,7 +406,7 @@ class SageWindow(QWidget):
     def show_home(self):
         if self._closing:
             return
-        self.show()
+        self.showFullScreen()
         self.raise_()
         self.activateWindow()
 
@@ -451,7 +452,7 @@ if __name__ == "__main__":
 
     # Create the SAGE window and display it.
     window = SageWindow()
-    window.show()
+    window.showFullScreen()
 
     # Provide a voice greeting when SAGE starts.
     QTimer.singleShot(

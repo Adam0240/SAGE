@@ -86,7 +86,7 @@ class GcodeDisplayPrintApp(QWidget):
         self.resize(1280, 720)
 
         # Use a black background to match the SAGE interface.
-        self.setStyleSheet("background-color: black;")
+        self.setStyleSheet("QWidget { background-color: black; color: white; }")
 
         # Arrange the title and preview vertically inside the app window.
         self.main_layout = QVBoxLayout(self)
@@ -643,9 +643,11 @@ class GcodeDisplayPrintApp(QWidget):
         dialog = QDialog(self)
         dialog.setWindowTitle("Select G-code File")
         dialog.resize(600, 400)
+        dialog.setWindowState(Qt.WindowState.WindowFullScreen)
         dialog.setStyleSheet(
             "QDialog { background-color: black; }"
             "QLineEdit { color: white; font-size: 18px; padding: 8px;"
+            " placeholder-text-color: #bbbbbb; selection-color: white;"
             " border: 1px solid white; selection-background-color: #245a81; }"
             "QLabel { color: white; font-size: 18px; }"
             "QListWidget { color: white; font-size: 18px; border: 1px solid white; }"
@@ -778,7 +780,7 @@ if __name__ == "__main__":
 
     # Create and display the G-code app window.
     window = GcodeDisplayPrintApp()
-    window.show()
+    window.showFullScreen()
 
     # Keep the application running until the window is closed.
     # Return its exit code so the system knows how the application ended.
