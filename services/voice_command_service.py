@@ -115,7 +115,8 @@ class VoiceCommandService:
             selection,
         )
 
-        selection = re.sub(r"\s+one$", "", selection)
+        if selection.endswith("one") and selection[-4:-3].isspace():
+            selection = selection[:-3].rstrip()
 
         return selections.get(selection)
 

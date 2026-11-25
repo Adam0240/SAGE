@@ -1,14 +1,16 @@
 [run]
-source =
-    main
-    login_dialog
-    sage_apps
-    services
-    database
-    TouchControls
-relative_files = False
+# A single root keeps XML filenames unique (for example services/__init__.py).
+source = .
+relative_files = True
 branch = True
 
 [report]
+include =
+    main.py
+    login_dialog.py
+    sage_apps/*
+    services/*
+    database/*
+    TouchControls/*
 show_missing = True
 fail_under = 75

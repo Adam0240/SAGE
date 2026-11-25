@@ -110,19 +110,22 @@ Database integration tests require the separate configured test database:
 .\.venv\Scripts\python.exe -m pytest tests/integration -q
 ```
 
+### Coverage and SonarQube
+
 To generate fresh coverage data for SonarQube:
 
 ```powershell
+$env:QT_QPA_PLATFORM = 'offscreen'
 .\.venv\Scripts\python.exe -m coverage erase
 .\.venv\Scripts\python.exe -m coverage run -m pytest tests/ui tests/unit -q
 .\.venv\Scripts\python.exe -m coverage report -m
 .\.venv\Scripts\python.exe -m coverage xml -o coverage.xml
 ```
 
-Run the report and XML steps separately even if tests fail. `.coveragerc` measures `main`, `sage_apps`, and `services`; its 75% local threshold is separate from SonarQube's quality gate. With Pysonar installed and `SONAR_TOKEN` configured in `.env`, run:
+Run the report and XML steps separately even if tests fail. `.coveragerc` measures `main`, `login_dialog`, `sage_apps`, `services`, `database`, and `TouchControls` using relative file paths; its 75% local threshold is separate from SonarQube's quality gate. Regenerate `coverage.xml` after source changes and before each scan: a stale report can reference lines that no longer exist and cause SonarQube to reject the import. With coverage.py and Pysonar installed in the virtual environment and `SONAR_TOKEN` configured in `.env`, run from the project root:
 
 ```powershell
-dotenv run -- pysonar
+.\.venv\Scripts\dotenv.exe run -- .\.venv\Scripts\pysonar.exe
 ```
 
 See [test documentation](tests/README.md) for test categories, isolation, and database requirements.
