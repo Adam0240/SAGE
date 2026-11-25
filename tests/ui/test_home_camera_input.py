@@ -1,12 +1,22 @@
-from types import SimpleNamespace
 import time
 import warnings
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
-from PySide6.QtCore import QCoreApplication, QEvent, QObject, QPoint, Signal, QTimer, Qt
+from PySide6.QtCore import QCoreApplication, QEvent, QObject, QPoint, QTimer, Signal
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QPushButton, QLineEdit, QListWidget, QComboBox, QTextBrowser, QWidget
+from PySide6.QtWidgets import (
+    QApplication,
+    QComboBox,
+    QDialog,
+    QLineEdit,
+    QListWidget,
+    QMessageBox,
+    QPushButton,
+    QTextBrowser,
+    QWidget,
+)
 
 from main import SageWindow
 from TouchControls.calibration import Calibration, target_points

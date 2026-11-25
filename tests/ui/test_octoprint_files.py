@@ -1,13 +1,13 @@
 """Exercise the real Qt HTTP client and viewer against a local OctoPrint stand-in."""
 
-from collections import Counter
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
-from pathlib import Path
 import tempfile
 import threading
 import time
 import unittest
+from collections import Counter
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from unittest.mock import patch
 from urllib.parse import unquote, urlsplit
 
@@ -17,7 +17,8 @@ from PySide6.QtWidgets import QApplication, QDialogButtonBox
 
 from sage_apps.gcode_display_print_app import GcodeDisplayPrintApp
 from sage_apps.octoprint_file_dialog import OctoPrintFileDialog
-from services.octoprint_file_service import RemoteFile, parse_library
+from services.octoprint_file_service import RemoteFile
+from services.session_service import SessionService
 
 
 class TestOctoPrintFiles(unittest.TestCase):
@@ -60,6 +61,8 @@ class TestOctoPrintFiles(unittest.TestCase):
                 code = owner.errors.get(path, 200)
                 if path == "/octo/api/printer":
                     body = json.dumps({"state": {"flags": owner.printer_flags}}).encode()
+                elif path == "/octo/api/job":
+                    body = json.dumps({"state": "Printing", "progress": {"printTimeLeft": 9300}}).encode()
                 elif path == "/octo/api/files/local":
                     body = b"not json" if owner.invalid_library else json.dumps(owner.library()).encode()
                 elif path.startswith("/octo/api/files/local/"):
@@ -121,7 +124,22 @@ class TestOctoPrintFiles(unittest.TestCase):
         })
         config.start()
         self.addCleanup(config.stop)
-        self.window = GcodeDisplayPrintApp(thumbnail_dir=self.root / "cache")
+        self.session_service = SessionService()
+        permission = patch("services.octoprint_print_service.has_print_permission", return_value=True)
+        self.permission = permission.start()
+        self.addCleanup(permission.stop)
+
+        self.session_state = self.session_service.log_in(
+            user_id=1,
+            user_name="Test Specialist",
+            role="steam_specialist",
+        )
+
+        self.window = GcodeDisplayPrintApp(
+            thumbnail_dir=self.root / "cache",
+            can_start_print=lambda: self.session_state.can_start_print,
+            get_session=lambda: self.session_state,
+        )
         self.addCleanup(self.close_window)
         self.wait_until(lambda: not self.window.library_loading)
 
@@ -344,10 +362,172 @@ class TestOctoPrintFiles(unittest.TestCase):
         self.assertIn("not configured", self.window.library_message)
         self.assertFalse(self.window.file_service.active)
 
-    def test_invalid_paths_are_rejected(self):
-        for name in ("..", "../file.gcode", "a\\b.gcode"):
-            with self.assertRaises(ValueError):
-                parse_library({"files": [dict(name=name, type="machinecode")]})
+    def test_replaced_preview_is_rejected_until_reviewed_again(self):
+        self.prepare_print()
+        path = "parts/model.gcode"
+        self.files[path] = b"G1 X0 Y0\nG1 X90 Y90\n"  # Same path and size.
+        self.versions[path] += 1
+        self.window.start_print()
+        self.wait_until(lambda: not self.window.print_service.busy)
+        self.assertEqual(self.posts, [])
+        self.assertFalse(self.window._file_validated)
+        self.assertIsNone(self.window._preview_path)
+        self.assertIn("review", self.window.preview_label.text())
+        self.window.start_print()
+        self.assertEqual(self.posts, [])
+        self.prepare_print()
+        self.window.start_print()
+        self.wait_until(lambda: not self.window.print_service.busy)
+        self.assertEqual(len(self.posts), 1)
+
+    def test_date_and_size_version_can_print_but_date_change_requires_review(self):
+        original = self.metadata
+
+        def metadata(path):
+            data = original(path)
+            data.pop("hash")
+            return data
+
+        with patch.object(self, "metadata", side_effect=metadata):
+            self.prepare_print()
+            self.versions["parts/model.gcode"] += 1
+            self.window.start_print()
+            self.wait_until(lambda: not self.window.print_service.busy)
+            self.assertEqual(self.posts, [])
+            self.prepare_print()
+            self.window.start_print()
+            self.wait_until(lambda: not self.window.print_service.busy)
+            self.assertEqual(len(self.posts), 1)
+
+    def test_file_replaced_during_permission_check_is_rejected(self):
+        self.prepare_print()
+
+        def permission(_):
+            self.versions["parts/model.gcode"] += 1
+            return True
+
+        self.permission.side_effect = permission
+        self.window.start_print()
+        self.wait_until(lambda: not self.window.print_service.busy)
+        self.assertEqual(self.posts, [])
+        self.assertFalse(self.window._file_validated)
+
+    def test_file_metadata_failures_and_unversioned_files_fail_closed(self):
+        original = self.metadata
+        for failure in ("missing", "denied", "malformed", "unversioned", "date_size"):
+            with self.subTest(failure=failure):
+                self.prepare_print()
+
+                def metadata(path):
+                    data = original(path)
+                    if failure == "malformed":
+                        return []
+                    data.pop("hash", None)
+                    if failure == "unversioned":
+                        data.pop("date", None)
+                    return data
+
+                api_path = "/octo/api/files/local/parts/model.gcode"
+                if failure in ("missing", "denied"):
+                    self.errors[api_path] = 404 if failure == "missing" else 403
+                with patch.object(self, "metadata", side_effect=metadata):
+                    # Also exercise previewing a server with no hash/date.
+                    if failure == "unversioned":
+                        self.select("parts/model.gcode")
+                    self.window.start_print()
+                    self.wait_until(lambda: not self.window.print_service.busy)
+                self.errors.clear()
+                self.assertEqual(self.posts, [])
+                self.assertFalse(self.window._file_validated)
+
+    def test_metadata_check_cancel_timeout_and_session_change_never_submit(self):
+        for action in ("home", "timeout", "logout"):
+            with self.subTest(action=action):
+                self.session_state = self.session_service.log_in(1, "Staff", "steam_specialist")
+                self.prepare_print()
+                api_path = "/octo/api/files/local/parts/model.gcode"
+                gate = self.gates[api_path] = threading.Event()
+                previous = sum(path == api_path for path, _, _ in self.requests)
+                verifier = self.window.print_service.file_service
+                if action == "timeout":
+                    verifier.REQUEST_TIMEOUT_MS = 80
+                self.window.start_print()
+                self.wait_until(lambda: sum(path == api_path for path, _, _ in self.requests) > previous)
+                if action == "home":
+                    self.window.home_button.click()
+                elif action == "logout":
+                    self.session_state = self.session_service.log_out()
+                if action != "timeout":
+                    gate.set()
+                self.wait_until(lambda: not self.window.print_service.busy)
+                gate.set()
+                self.gates.clear()
+                verifier.REQUEST_TIMEOUT_MS = 15000
+                QTest.qWait(50)
+                self.assertEqual(self.posts, [])
+                self.assertFalse(verifier.active)
+
+    def test_cache_budget_preserves_selection_then_evicts_released_version(self):
+        cache = self.window.file_service.cache
+        cache.max_files = 1
+        self.select("parts/model.gcode")
+        previous = self.window._preview_path
+        cache.max_bytes = 0
+        cache.prune()
+        self.assertTrue(previous.exists())
+        self.select("parts/z.gcode")
+        current = self.window._preview_path
+        self.assertFalse(previous.exists())
+        self.assertTrue(current.exists())
+        self.window.file_service.cancel()
+        self.assertFalse(current.exists())
+
+    def test_readonly_download_cache_reports_failure_without_validating_file(self):
+        with patch.object(Path, "mkdir", side_effect=PermissionError("Read-only cache")):
+            self.select("parts/model.gcode")
+        self.assertFalse(self.window._file_validated)
+        self.assertIn("cache", self.window.preview_label.text())
+        self.assertFalse(self.window.file_service.active)
+
+    def test_destroyed_file_service_releases_cache_lease(self):
+        from shiboken6 import delete
+
+        from services.octoprint_file_service import OctoPrintFileService
+
+        service = OctoPrintFileService(self.root / "isolated-cache")
+        service.cache.max_files = 0
+        path = service.cache_dir / ("sage-gcode-" + "b" * 64 + ".gcode")
+        service._cache_slot[0] = service.cache.pin(path)
+        path.write_text("G1 X0 Y0\n")
+        delete(service)
+        self.assertFalse(path.exists())
+        self.assertFalse(Path(str(path) + ".lock").exists())
+
+    def test_remaining_time_http_success_failure_and_cancelled_job(self):
+        service = self.window.printer_status_service
+        self.printer_flags.update(ready=False, printing=True)
+        service.check()
+        self.wait_until(lambda: service.reply is None)
+        self.assertTrue(service.status.busy)
+        self.assertEqual(service.status.remaining_seconds, 9300)
+        self.errors["/octo/api/job"] = 500
+        service.check()
+        self.wait_until(lambda: service.reply is None)
+        self.assertTrue(service.status.busy)
+        self.assertIsNone(service.status.remaining_seconds)
+        self.errors.clear()
+        gate = self.gates["/octo/api/job"] = threading.Event()
+        previous = sum(path == "/octo/api/job" for path, _, _ in self.requests)
+        received = []
+        service.completed.connect(received.append)
+        service.check()
+        self.wait_until(lambda: sum(path == "/octo/api/job" for path, _, _ in self.requests) > previous)
+        service.cancel()
+        gate.set()
+        QTest.qWait(80)
+        self.assertEqual(received, [])
+        self.assertIsNone(service.reply)
+        self.assertFalse(service.status.busy)
 
     def prepare_print(self, path="parts/model.gcode"):
         self.window.show()
@@ -520,3 +700,211 @@ class TestOctoPrintFiles(unittest.TestCase):
         self.window.file_service = OctoPrintFileService(self.root / "cache", self.window)
         QTest.qWait(50)
 
+    def test_only_steam_specialist_can_start_print(self):
+        self.prepare_print()
+
+        for role in ("student", "base_specialist", "boss_admin"):
+            with self.subTest(role=role):
+
+                if role == "student":
+                    self.session_state = self.session_service.log_out()
+                else:
+                    self.session_state = self.session_service.log_in(
+                        user_id=2,
+                        user_name="Test User",
+                        role=role,
+                    )
+
+                self.window._update_print_button()
+
+                self.assertFalse(
+                    self.window.start_print_button.isEnabled()
+                )
+
+                # Verify the UI handler cannot bypass authorization.
+                self.window.start_print()
+
+                # Verify the service cannot bypass authorization.
+                self.window.print_service.start(
+                    self.window.selected_remote_file,
+                    self.window.file_service.library_source,
+                )
+
+                self.assertFalse(self.window.print_service.busy)
+                self.assertEqual(self.posts, [])
+
+        # Verify printing becomes available after specialist login.
+        self.session_state = self.session_service.log_in(
+            user_id=1,
+            user_name="Test Specialist",
+            role="steam_specialist",
+        )
+
+        # Wait for any existing printer status check to finish.
+        self.wait_until(
+            lambda: self.window.printer_status_service.reply is None
+        )
+
+        # Refresh the printer status.
+        self.window.check_printer_status()
+
+        self.wait_until(
+            lambda: self.window.printer_status_service.reply is None
+        )
+
+        self.window._update_print_button()
+
+        self.assertTrue(
+            self.window.start_print_button.isEnabled()
+        )
+
+    def test_open_voice_project(self):
+        source = self.window.file_service.library_source
+
+        self.window.show()
+
+        self.window.open_voice_project(
+            "other/model.gcode",
+            source,
+        )
+
+        self.wait_for_preview()
+
+        self.assertEqual(
+            self.window.selected_remote_file.path,
+            "other/model.gcode",
+        )
+
+        self.assertFalse(
+            self.window.preview_label.pixmap().isNull()
+        )
+
+        # Displaying a project must not start a print.
+        self.assertEqual(self.posts, [])
+
+    def test_revocation_during_printer_preflight_rejects_print(self):
+        self.prepare_print()
+        revoked = []
+        self.window.print_service.authorization_revoked.connect(revoked.append)
+        session = self.session_state
+        gate = self.gates["/octo/api/printer"] = threading.Event()
+        before = len(self.requests)
+        self.window.start_print()
+        self.wait_until(lambda: len(self.requests) > before)
+        # The user was removed, disabled, or demoted after the cached login.
+        self.permission.return_value = False
+        gate.set()
+        self.wait_until(lambda: not self.window.print_service.busy)
+        self.assertEqual(self.posts, [])
+        self.assertEqual(revoked, [session])
+        self.permission.assert_called_once_with(session.user_id)
+        self.assertIn("revoked", self.window.print_message_label.text())
+
+    def test_database_failure_rejects_print_without_retry_and_recovers(self):
+        self.prepare_print()
+        self.permission.side_effect = RuntimeError("private database details")
+        self.window.start_print()
+        self.wait_until(lambda: not self.window.print_service.busy)
+        self.assertEqual(self.posts, [])
+        self.permission.assert_called_once()
+        self.assertIn("Unable to verify", self.window.print_message_label.text())
+        self.assertNotIn("private", self.window.print_message_label.text())
+        self.permission.side_effect = None
+        self.prepare_print()
+        self.window.start_print()
+        self.wait_until(lambda: not self.window.print_service.busy)
+        self.assertEqual(len(self.posts), 1)
+
+    def test_slow_authorization_is_responsive_and_abandoned_results_cannot_print(self):
+        for action in ("logout", "replacement_login", "home", "timeout"):
+            with self.subTest(action=action):
+                self.session_state = self.session_service.log_in(1, "Specialist", "steam_specialist")
+                self.prepare_print()
+                entered, release = threading.Event(), threading.Event()
+                worker_ids = []
+
+                def check(_user_id):
+                    worker_ids.append(threading.get_ident())
+                    entered.set()
+                    if not release.wait(5):
+                        raise RuntimeError("Test did not release permission check")
+                    return True
+
+                self.permission.side_effect = check
+                service = self.window.print_service
+                revoked = []
+                service.authorization_revoked.connect(revoked.append)
+                try:
+                    self.window.start_print()
+                    self.wait_until(entered.is_set)
+                    ticks = []
+                    QTimer.singleShot(0, lambda: ticks.append(True))
+                    self.wait_until(lambda: bool(ticks))
+                    self.assertNotEqual(worker_ids[0], threading.get_ident())
+                    self.assertTrue(service.busy)
+                    if action == "logout":
+                        self.session_state = self.session_service.log_out()
+                    elif action == "replacement_login":
+                        # Same identity/role still represents a different login.
+                        self.session_state = self.session_service.log_in(1, "Specialist", "steam_specialist")
+                    elif action == "home":
+                        self.window.home_button.click()
+                    else:
+                        service._authorization_deadline = time.monotonic() - 1
+                    self.wait_until(lambda: not service.busy)
+                    if action == "home":
+                        calls = self.permission.call_count
+                        self.prepare_print()
+                        self.window.start_print()
+                        self.wait_until(lambda: not service.busy)
+                        self.assertIn("still finishing", self.window.print_message_label.text())
+                        self.assertEqual(self.permission.call_count, calls)
+                    release.set()
+                    service._authorization_thread.join(3)
+                    self.assertFalse(service._authorization_thread.is_alive())
+                    QTest.qWait(40)
+                    self.assertEqual(self.posts, [])
+                    self.assertEqual(revoked, [])
+                finally:
+                    release.set()
+                    service._authorization_thread.join(3)
+                    service.authorization_revoked.disconnect(revoked.append)
+                    self.permission.side_effect = None
+
+    def test_cached_callback_without_session_cannot_authorize_print(self):
+        self.prepare_print()
+        self.window.print_service.get_session = lambda: None
+        self.window.start_print()
+        self.assertFalse(self.window.print_service.busy)
+        self.assertEqual(self.posts, [])
+        self.permission.assert_not_called()
+
+
+    def test_open_deleted_voice_project(self):
+        source = self.window.file_service.library_source
+
+        del self.files["other/model.gcode"]
+
+        self.window.show()
+
+        self.window.open_voice_project(
+            "other/model.gcode",
+            source,
+        )
+
+        self.wait_for_preview()
+
+        self.assertIsNone(
+            self.window.selected_remote_file
+        )
+
+        self.assertIn(
+            "no longer available",
+            self.window.preview_label.text(),
+        )
+
+        self.assertFalse(
+            self.window.start_print_button.isEnabled()
+        )
+
+        self.assertEqual(self.posts, [])

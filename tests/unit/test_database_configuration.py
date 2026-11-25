@@ -103,10 +103,12 @@ class TestDatabaseDeadline(unittest.TestCase):
     # Exercise the transaction wrapper's real rollback and subsequent retry in an ephemeral database.
     def test_timeout_rolls_back_account_transaction_before_retry(self):
         from unittest.mock import Mock
-        from sqlalchemy import create_engine, text
-        from sqlalchemy.orm import sessionmaker
-        from sqlalchemy.exc import OperationalError
+
         from psycopg.errors import QueryCanceled
+        from sqlalchemy import create_engine, text
+        from sqlalchemy.exc import OperationalError
+        from sqlalchemy.orm import sessionmaker
+
         from database import account_operations
 
         engine = create_engine("sqlite:///:memory:")
@@ -138,9 +140,11 @@ class TestDatabaseDeadline(unittest.TestCase):
         import socket
         import time
         from unittest.mock import Mock
+
         from psycopg import pq
         from psycopg.waiting import Wait
-        from database.timeouts import DeadlineConnection, DatabaseWaitTimeout
+
+        from database.timeouts import DatabaseWaitTimeout, DeadlineConnection
 
         def awaiting_response():
             while True:
@@ -167,7 +171,9 @@ class TestDatabaseDeadline(unittest.TestCase):
     # Successful waits preserve the connection; do_connect retains SQLAlchemy's connection arguments.
     def test_connection_factory_and_successful_wait(self):
         from unittest.mock import Mock
+
         import psycopg
+
         from database.timeouts import DeadlineConnection, connect_with_deadline
         with patch.object(DeadlineConnection, "connect") as connect:
             self.assertIs(connect_with_deadline(None, None, ["dbname=test"], {"connect_timeout": 3}), connect.return_value)

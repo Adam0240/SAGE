@@ -24,7 +24,6 @@ if __name__ == "__main__" and __package__ is None:
 
 from services.ai_response_worker import AIResponseLoader
 from services.document_retrieval_service import DocumentRetrievalService
-from services.guide_response_service import GuideResponseService
 from TouchControls.widgets import scroll_controls
 
 
@@ -44,7 +43,6 @@ class SteamGuide_App(QWidget):
             else Path(__file__).resolve().parent.parent / "STEAM_Tutorials"
         )
         self.retrieval_service = DocumentRetrievalService(self.tutorial_directory)
-        self.response_service = GuideResponseService()
 
         # Handle AI responses without blocking the interface.
         self.ai_loader = AIResponseLoader(self)

@@ -10,11 +10,47 @@ from PySide6.QtGui import QColor, QImage
 
 from services.gcode_parser import read_gcode_coordinates
 from services.gcode_preview_service import (
-    GcodePreviewService, NoPreviewableMovementError, UnreadableGcodeError,
+    GcodePreviewService,
+    NoPreviewableMovementError,
+    UnreadableGcodeError,
 )
 
 
 class TestGcodePreviewService(unittest.TestCase):
+    def test_cleanup_cannot_remove_source_while_rendering(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Event
+
+        source_dir = self.thumb_dir / "gcodes"
+        source_dir.mkdir(parents=True)
+        path = source_dir / ("sage-gcode-" + "a" * 64 + ".gcode")
+        path.write_text("G1 X0 Y0\nG1 X10 Y10\n")
+        self.service.source_cache.max_bytes = 0
+        entered, release = Event(), Event()
+
+        def read(*args, **kwargs):
+            entered.set()
+            assert release.wait(3)
+            return read_gcode_coordinates(*args, **kwargs)
+
+        with ThreadPoolExecutor(max_workers=1) as pool, patch(
+                "services.gcode_preview_service.read_gcode_coordinates", side_effect=read):
+            future = pool.submit(self.service.get_preview, path)
+            try:
+                self.assertTrue(entered.wait(3))
+                self.service.source_cache.prune()
+                self.assertTrue(path.exists())
+            finally:
+                release.set()
+            self.assertFalse(future.result(3).isNull())
+        self.assertFalse(path.exists())
+
+    def test_png_budget_does_not_prevent_returning_rendered_image(self):
+        self.service.cache.max_bytes = 0
+        image = self.service.get_preview(self.write_gcode())
+        self.assertFalse(image.isNull())
+        self.assertEqual(list(self.thumb_dir.glob("*.png")), [])
+
     # Coordinate limits fail explicitly rather than rendering a misleading partial path.
     def test_coordinate_budget_does_not_write_partial_cache(self):
         from services.gcode_parser import GcodeTooLargeError
@@ -26,12 +62,25 @@ class TestGcodePreviewService(unittest.TestCase):
 
     # Cancelling during parsing stops promptly and does not cache an incomplete preview.
     def test_cancel_during_parsing(self):
-        from unittest.mock import Mock
+        from contextlib import contextmanager
+        from threading import Event
+
         from services.gcode_parser import PreviewCancelled
         path = self.write_gcode(content="G1 X0 Y0\nG1 X1 Y1\nG1 X2 Y2\n")
-        cancelled = Mock()
-        cancelled.is_set.side_effect = [False, False, True]
-        with self.assertRaises(PreviewCancelled):
+        cancelled = Event()
+        original_open = Path.open
+
+        @contextmanager
+        def controlled_open(path, *args, **kwargs):
+            with original_open(path, *args, **kwargs) as stream:
+                def lines():
+                    for index, line in enumerate(stream):
+                        if index == 1:
+                            cancelled.set()
+                        yield line
+                yield lines()
+
+        with patch.object(Path, "open", controlled_open), self.assertRaises(PreviewCancelled):
             self.service.get_preview(path, cancel_event=cancelled)
         self.assertEqual(list(self.thumb_dir.glob("*.png")), [])
 
@@ -61,7 +110,6 @@ class TestGcodePreviewService(unittest.TestCase):
         self.assertEqual((image.width(), image.height()), (800, 600))
         self.assertEqual(image.pixelColor(0, 0), QColor("black"))
         self.assertEqual(image.pixelColor(400, 300), QColor("lightgray"))
-        self.assertFalse(image.isNull())
 
     # Tests an unchanged file reuses its cached image without parsing the G-code again.
     def test_cached_preview_skips_parsing(self):
@@ -75,26 +123,26 @@ class TestGcodePreviewService(unittest.TestCase):
     # Tests changed content and same-named files in different folders receive separate cache entries.
     def test_cache_content_and_path_changes(self):
         file_path = self.write_gcode()
-        image = self.service.get_preview(file_path)
+        self.service.get_preview(file_path)
         file_path.write_text("G1 X0 Y0\nG1 X100 Y200\nG1 X200 Y300\n", encoding="utf-8")
         with patch("services.gcode_preview_service.read_gcode_coordinates",
                           wraps=read_gcode_coordinates) as read:
-            image = self.service.get_preview(file_path)
+            self.service.get_preview(file_path)
             read.assert_called_once_with(file_path, cancel_event=None, max_coordinates=self.service.MAX_COORDINATES)
         other = self.root / "model.gcode"
         other.write_bytes(file_path.read_bytes())
-        image = self.service.get_preview(other)
+        self.service.get_preview(other)
         self.assertEqual(len(list(self.thumb_dir.glob("*.png"))), 3)
 
     # Tests a damaged cached image is regenerated from the original G-code.
     def test_corrupted_cache_is_regenerated(self):
         file_path = self.write_gcode()
-        image = self.service.get_preview(file_path)
+        self.service.get_preview(file_path)
         preview_path = next(self.thumb_dir.glob("*.png"))
         preview_path.write_bytes(b"not a PNG")
         with patch("services.gcode_preview_service.read_gcode_coordinates",
                           wraps=read_gcode_coordinates) as read:
-            image = self.service.get_preview(file_path)
+            self.service.get_preview(file_path)
             read.assert_called_once_with(file_path, cancel_event=None, max_coordinates=self.service.MAX_COORDINATES)
         self.assertFalse(QImage(str(preview_path)).isNull())
 

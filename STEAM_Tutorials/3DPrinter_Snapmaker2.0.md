@@ -1,5 +1,7 @@
 # 3D Printing — Snapmaker 2.0
 
+The nozzle and bed become hot during operation. Keep your hands clear of hot parts and moving components.
+
 ## What is a 3D Printer?
 
 A 3D printer takes a digital model and turns it into a physical object. It does this by heating plastic filament and placing it down one layer at a time until the object is finished.
@@ -150,5 +152,3 @@ Ask Adam to check the connection if the printer remains unavailable.
 ## Need Help?
 
 Ask Adam if you need help finding a model, preparing a file, using OctoPrint, choosing settings, or troubleshooting a failed print.
-
-The nozzle and bed become hot during operation. Keep your hands clear of hot parts and moving components.

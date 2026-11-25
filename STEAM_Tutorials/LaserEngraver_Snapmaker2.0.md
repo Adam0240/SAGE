@@ -1,5 +1,11 @@
 # Laser Engraving — Snapmaker 2.0
 
+Only use materials approved for laser engraving. Some plastics, coatings, and unknown materials can release hazardous fumes or damage the equipment.
+
+Keep the enclosure closed, use the ventilation, and do not leave an engraving unattended.
+
+If you see flames or anything unusual, stop the job and get Adam.
+
 ## What is Laser Engraving?
 
 Laser engraving uses a focused laser to mark a design onto a material. This can include text, logos, photographs, and other artwork.
@@ -166,15 +172,9 @@ Close the other applications, then try connecting again through the application 
 
 For the normal engraving workflow, start with Cura and LightBurn closed. Connect through Luban to set the laser height. When that step is finished, disconnect and close Luban before opening and connecting through LightBurn.
 
+**This handoff needs Adam’s supervision. Disconnecting the application is not confirmation that the loaded job has stopped. Before continuing, confirm that no Luban job remains active and the laser is off.**
+
 If it still will not connect, ask Adam for help.
-
-## Material and Equipment Safety
-
-Only use materials approved for laser engraving. Some plastics, coatings, and unknown materials can release hazardous fumes or damage the equipment.
-
-Keep the enclosure closed, use the ventilation, and do not leave an engraving unattended.
-
-If you see flames or anything unusual, stop the job and get Adam.
 
 ## Need Help?
 

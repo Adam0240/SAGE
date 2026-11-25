@@ -2,13 +2,13 @@ import time
 from unittest.mock import Mock, patch
 
 import pytest
-from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import QTimer
 from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication
 
 from TouchControls.calibration import Calibration
-from TouchControls.hand_calibration import CalibrationWindow, CameraWorker
 from TouchControls.camera_worker import capture_process
+from TouchControls.hand_calibration import CalibrationWindow, CameraWorker
 
 
 @pytest.fixture

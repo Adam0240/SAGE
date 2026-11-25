@@ -13,6 +13,14 @@ def _make_service(session) -> AccountService:
         PasswordService(),
     )
 
+
+def has_print_permission(user_id: int) -> bool:
+    # Use a fresh session so revocation is never checked against a login snapshot.
+    with SessionLocal() as session:
+        user = UserRepository(session).get_by_id(user_id)
+        return bool(user is not None and user.is_active and user.role == "steam_specialist")
+
+
 def list_accounts(
     actor_id: int,
 ) -> list[tuple[int, str, str, str, bool]]:

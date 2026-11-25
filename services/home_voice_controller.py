@@ -7,7 +7,10 @@ from PySide6.QtCore import QObject, QTimer, Signal, Slot
 from services.ai_response_worker import AIResponseLoader
 from services.speech_recognition_service import SpeechRecognitionService
 from services.text_to_speech_service import TextToSpeechService
-
+from services.octoprint_file_service import OctoPrintFileService
+from services.project_search_service import ProjectSearchService
+from services.voice_command_service import VoiceCommandService
+from services.printer_status_service import PrinterStatusService
 
 class HomeSpeechRecognitionService(SpeechRecognitionService):
     """Notify the home screen when automatic capture ends, before Whisper runs."""
@@ -28,6 +31,8 @@ class HomeVoiceController(QObject):
     speech_failed = Signal(int, str)
     speech_listening = Signal(int)
     speech_transcribing = Signal(int)
+
+    project_open_requested = Signal(str, str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -56,6 +61,46 @@ class HomeVoiceController(QObject):
         self.ai_loader = AIResponseLoader(self)
         self.ai_loader.completed.connect(self.on_voice_ai_response)
         self._voice_ai_request = 0
+
+        # Initialize voice command processing.
+        self.voice_command_service = VoiceCommandService()
+        self.project_search_service = ProjectSearchService()
+
+        # Initialize read-only access to the OctoPrint file library.
+        self.project_file_service = OctoPrintFileService(
+            Path(__file__).resolve().parent.parent
+            / "sage_apps" / "thumbnails" / "gcodes",
+            self,
+        )
+
+        self.project_file_service.library_loaded.connect(
+            self.on_project_library_loaded
+        )
+
+        self.project_file_service.failed.connect(
+            self.on_project_library_failed
+        )
+
+        # Track the current project search request.
+        self._project_search_query = None
+        self._project_open_on_match = False
+
+        # Retain search results for follow-up voice commands.
+        self._project_matches = []
+        self._project_search_source = ""
+
+        # Initialize read-only printer status retrieval.
+        self.printer_status_service = PrinterStatusService(
+            self,
+            include_job=True,
+        )
+
+        self.printer_status_service.completed.connect(
+            self.on_printer_status_completed
+        )
+
+        # Track active printer status requests.
+        self._printer_status_pending = False
 
         # Initialize spoken responses for the home screen.
         self.tts_service = None
@@ -188,7 +233,7 @@ class HomeVoiceController(QObject):
 
     @Slot(int, str)
     def on_speech_recognized(self, request_id, transcript):
-        """Send recognized speech to SAGE's existing AI assistant."""
+        """Process recognized speech and route supported voice commands."""
         if request_id != self._speech_request_id:
             return
 
@@ -201,10 +246,46 @@ class HomeVoiceController(QObject):
             self._set_button(self._button_text, True)
             return
 
+        print(f"User: {question}")
         self._set_button("SAGE is thinking...", False)
 
         self.start_thinking_animation()
 
+        # Check whether the user is requesting the printer status.
+        if self.voice_command_service.is_printer_status_command(
+            question
+        ):
+            self.check_printer_status()
+            return
+
+        # Check whether the user is selecting a previous search result.
+        selection = self.voice_command_service.get_project_selection(
+            question
+        )
+
+        if selection is not None:
+            if self.handle_project_selection(selection):
+                return
+
+        # Determine whether the user is searching for a saved project.
+        project_query = (
+            self.voice_command_service.get_project_search_query(
+                question
+            )
+        )
+
+        if project_query is not None:
+            self.search_saved_projects(
+                project_query,
+                open_on_match=selection is not None,
+            )
+            return
+
+        # Clear previous project results when changing topics.
+        self._project_matches = []
+        self._project_search_source = ""
+
+        # Send general questions to the existing AI assistant.
         try:
             self._voice_ai_request = self.ai_loader.submit(
                 question,
@@ -212,6 +293,202 @@ class HomeVoiceController(QObject):
             )
         except Exception as error:
             self.on_speech_failed(request_id, str(error))
+
+    def check_printer_status(self):
+        """Retrieve the current printer status and remaining print time."""
+
+        self._printer_status_pending = True
+
+        self._set_button("Checking printer status...", False)
+
+        print("Retrieving printer status from OctoPrint.")
+
+        self.printer_status_service.check()
+
+
+    @Slot(str)
+    def on_printer_status_completed(self, message):
+        """Provide a spoken response based on the printer status."""
+
+        if self._closing or not self._printer_status_pending:
+            return
+
+        self._printer_status_pending = False
+
+        status = self.printer_status_service.status
+
+        # The printer is connected and ready.
+        if status.ready:
+            response = (
+                "The 3D printer is currently connected and idle. "
+                "There is no active print."
+            )
+
+        # The printer is currently busy.
+        elif status.busy:
+
+            if status.remaining_seconds is not None:
+
+                # Convert the remaining seconds into hours and minutes.
+                total_minutes = (
+                    status.remaining_seconds + 59
+                ) // 60
+
+                hours, minutes = divmod(total_minutes, 60)
+
+                response = (
+                    "The 3D printer is currently busy. "
+                    f"The estimated remaining print time is "
+                    f"{hours} hours and {minutes} minutes."
+                )
+
+            else:
+                response = (
+                    "The 3D printer is currently busy, "
+                    "but the remaining print time is unavailable."
+                )
+
+        # The printer status could not be determined.
+        else:
+            response = message
+
+        print(f"SAGE answer: {response}")
+
+        self.speak_response(response)
+    
+    def handle_project_selection(self, selection):
+        """Handle a request to display a previous search result."""
+
+        if not self._project_matches:
+            return False
+
+        # Check whether the user selected a numbered result.
+        index = self.voice_command_service.get_selection_index(
+            selection
+        )
+
+        if index is not None:
+            if index >= len(self._project_matches):
+                self.speak_response(
+                    "That project number is not available."
+                )
+                return True
+
+            self.open_selected_project(
+                self._project_matches[index]
+            )
+            return True
+
+        # Otherwise, attempt to locate the project by name.
+        matches = self.project_search_service.find_selection(
+            selection,
+            self._project_matches,
+        )
+
+        if len(matches) == 1:
+            self.open_selected_project(matches[0])
+            return True
+
+        if len(matches) > 1:
+            self.speak_response(
+                "Several projects match that name. "
+                "Please provide a more specific project name "
+                "or select a numbered option."
+            )
+            return True
+
+        return False
+
+
+    def open_selected_project(self, entry):
+        """Request that SAGE display the selected OctoPrint project."""
+
+        print(f"Opening saved project: {entry.path}")
+
+        self.project_open_requested.emit(
+            entry.path,
+            self._project_search_source,
+        )
+    
+    def search_saved_projects(self, query, *, open_on_match=False):
+        """Retrieve the current OctoPrint project library."""
+
+        self._project_search_query = query
+        self._project_open_on_match = open_on_match
+
+        # Clear results from the previous search.
+        self._project_matches = []
+        self._project_search_source = ""
+
+        self._set_button("Searching projects...", False)
+
+        print(f"Searching saved projects for: {query}")
+
+        self.project_file_service.load_library()
+
+
+    @Slot(object)
+    def on_project_library_loaded(self, folders):
+        """Search the retrieved OctoPrint project library."""
+
+        if self._closing or self._project_search_query is None:
+            return
+
+        query = self._project_search_query
+        open_on_match = self._project_open_on_match
+
+        self._project_search_query = None
+        self._project_open_on_match = False
+
+        # Search the retrieved filenames.
+        matches = self.project_search_service.search(
+            query,
+            folders,
+        )
+
+        # Retain results for subsequent voice commands.
+        self._project_matches = matches
+        self._project_search_source = (
+            self.project_file_service.library_source
+        )
+
+        # Open a unique project when explicitly requested.
+        if open_on_match and len(matches) == 1:
+            self.open_selected_project(matches[0])
+            return
+
+        # Generate a response using the actual search results.
+        response = self.project_search_service.create_response(
+            query,
+            matches,
+        )
+
+        print(f"SAGE answer: {response}")
+
+        self.speak_response(response)
+
+
+    @Slot(str, str)
+    def on_project_library_failed(self, kind, message):
+        """Handle unavailable OctoPrint project information."""
+
+        if (
+            self._closing
+            or kind != "library"
+            or self._project_search_query is None
+        ):
+            return
+
+        self._project_search_query = None
+        self._project_open_on_match = False
+
+        print(f"OctoPrint project search error: {message}")
+
+        self.speak_response(
+            "I am currently unable to access the saved "
+            "3D printing projects in OctoPrint. "
+            "Please check the OctoPrint connection."
+        )
 
     @Slot(int, object)
     def on_voice_ai_response(self, request_id, response):
@@ -224,6 +501,11 @@ class HomeVoiceController(QObject):
 
         print(f"SAGE answer: {answer}")
 
+        self.speak_response(answer)
+
+
+    def speak_response(self, answer):
+        """Speak a response using the text-to-speech service."""
         self._set_button("Talk to SAGE", True)
 
         # Speak the answer using Microsoft Zira.
@@ -243,11 +525,26 @@ class HomeVoiceController(QObject):
 
             self._awaiting_tts_completion = False
         else:
-            self.report_error(self._tts_error or "Text-to-speech is unavailable.")
+            self.report_error(
+                self._tts_error or "Text-to-speech is unavailable."
+            )
 
         # Stop if text-to-speech is unavailable or fails to start.
         self.stop_thinking_animation()
 
+    def speak_startup_greeting(self):
+        """Greet the user when SAGE is initially started."""
+        if self._closing or self.tts_service is None:
+            return
+
+        self.start_thinking_animation()
+
+        self.speak_response(
+            "Hello, and welcome to the STEAM Room. "
+            "I am SAGE, your STEAM Artificial Guidance Expert. "
+            "How can I assist you today?"
+        )
+    
     @Slot(int, str)
     def on_speech_failed(self, request_id, error):
         """Report microphone or recognition errors and restore the button."""
@@ -301,6 +598,19 @@ class HomeVoiceController(QObject):
         self._set_button("Talk to SAGE", not self._closing)
         self.ai_loader.cancel()
         self._voice_ai_request = 0
+
+        # Cancel any active OctoPrint project search.
+        self._project_search_query = None
+        self._project_open_on_match = False
+        self._project_matches = []
+        self._project_search_source = ""
+
+        self.project_file_service.cancel()
+
+        # Cancel any active printer status request.
+        self._printer_status_pending = False
+        self.printer_status_service.cancel()
+
         self._awaiting_tts_completion = False
         self.stop_thinking_animation()
 

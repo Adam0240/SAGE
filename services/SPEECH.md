@@ -1,7 +1,8 @@
 # Speech setup and lifecycle
 
-SAGE's home **Talk to SAGE** button uses `speech_recognition_service.py` to record
-mono microphone audio and transcribe it locally with faster-whisper.
+SAGE's home **Talk to SAGE** button uses `supervised_speech_service.py` to run
+`speech_recognition_service.py` in a reusable child process, recording mono
+microphone audio and transcribing it locally with faster-whisper.
 `home_voice_controller.py` connects recognition to the shared AI response worker
 and Microsoft Zira playback. The recognition service remains GUI-independent and
 can also be used directly. There is no wake-word activation. See the
@@ -19,13 +20,12 @@ to launch SAGE:
 .\.venv\Scripts\python.exe -c "import sounddevice; from faster_whisper import WhisperModel; print(sounddevice.query_devices())"
 ```
 
-The optional requirements are separate from the application's pinned requirements;
-the mocked tests do not establish a working combination of native dependency
-versions. Validate installation and actual transcription on the deployment Python
-before pinning its speech dependencies. In particular, Python 3.14 compatibility
-must be checked rather than inferred from a package's minimum Python version.
-A separate environment can run the service directly, but the home button uses the
-same process/environment as `main.py`; it does not invoke a separate speech environment.
+The optional manifest pins the speech/native versions import-tested on Windows
+Python 3.14. CI installs and audits it alongside the main requirements and checks
+native imports. Mocked tests and successful imports do not establish microphone or
+model transcription behavior; complete the deployment-device acceptance below.
+A separate environment can run the service directly, but the home button's child
+process uses the same Python environment as `main.py`.
 
 - **NumPy:** audio arrays and RMS amplitude calculation.
 - **sounddevice:** microphone capture. Windows pip installations include PortAudio;
@@ -89,7 +89,40 @@ and run:
 
 See the upstream [model download helper](https://github.com/SYSTRAN/faster-whisper/blob/master/faster_whisper/utils.py).
 
-## Lifecycle contract
+## Home recovery and process ownership
+
+Home owns one speech child process. Successful requests reuse its loaded model.
+The supervisor runs outside the Qt thread and applies a 30-second capture/startup
+deadline (the configured maximum recording duration plus 10 seconds), then a
+120-second deadline for model loading and transcription after capture ends.
+These deadlines do not depend on a blocked native operation returning.
+
+Navigation cancels the request immediately in the UI and gives the child one
+second to finish cooperatively. If it remains blocked, the supervisor terminates
+it, waits up to one second, and, if necessary, kills it and waits another second.
+No replacement starts until the previous process is confirmed dead. If termination
+fails, voice stays disabled in the service until SAGE is restarted. Timeout reports
+an error and allows a manual retry using a fresh worker; it does not retry a recording
+automatically. A retry can briefly be rejected while cleanup is still finishing.
+Shutdown and controller destruction also dispose of the child without waiting in Qt.
+
+The ready/captured/result/error callbacks are delivered from the supervisor thread
+and retain Home's request-ID filtering. Cancelled requests do not deliver transcripts
+or errors. Native model state is lost only when the child exits; idle and normally
+completed requests preserve it. Windows packaged entry points use `freeze_support()`.
+
+Before enabling public voice use on the deployment machine, test microphone
+disconnect/reconnect during capture, cancellation during transcription, timeout
+recovery, a successful retry, and closing SAGE during each stage. Confirm there is
+no remaining speech child and no competing microphone owner. Process tests cannot
+prove that a specific device driver releases hardware after process termination;
+if it does not, restart SAGE/device services and resolve that device issue before
+public use.
+
+## Direct engine lifecycle contract
+
+The following describes direct use of `SpeechRecognitionService`. Home wraps this
+engine in the supervised process above; direct callers do not get process recovery.
 
 - `start_recording(on_result=None, on_error=None, on_ready=None)` returns `True` when a worker starts, or
   `False` while a previous request is still busy. Model loading is lazy and the
@@ -128,8 +161,9 @@ See the upstream [model download helper](https://github.com/SYSTRAN/faster-whisp
 - There is no public blocking wait/shutdown API. The worker is a daemon; a direct
   caller must keep its process alive until work finishes. `HomeVoiceController`
   marshals callbacks through Qt signals, invalidates cancelled request IDs, and
-  calls `cancel_recording()` during navigation and shutdown. Its capture adapter
-  signals the transition to transcription after manual or automatic capture ends.
+  calls `cancel_recording()` during navigation and `shutdown()` on the supervisor
+  during shutdown. The engine's `on_captured` callback signals the transition to
+  transcription after manual or automatic capture ends.
 - Home stops active or pending Zira playback before starting another recording,
   waits 350 ms using a cancellable timer, and stops the avatar animation immediately
   on interruption. Login/logout, application navigation, and closing cancel voice
@@ -139,7 +173,7 @@ See the upstream [model download helper](https://github.com/SYSTRAN/faster-whisp
 
 ```powershell
 $env:QT_QPA_PLATFORM = 'offscreen'
-.\.venv\Scripts\python.exe -B -m pytest tests/ui/test_home_voice.py tests/unit/test_speech_recognition_service.py tests/unit/test_text_to_speech_service.py -q -p no:cacheprovider
+.\.venv\Scripts\python.exe -B -m pytest tests/ui/test_home_voice.py tests/unit/test_speech_recognition_service.py tests/unit/test_supervised_speech_service.py tests/unit/test_text_to_speech_service.py -q -p no:cacheprovider
 ```
 
 Tests inject fake audio streams and transcription models, use deterministic
@@ -152,3 +186,8 @@ interruption, handoff cancellation, late errors, login/navigation/shutdown, avat
 signals, and controller operation without a window. TTS tests use a fake engine.
 Physical microphone behavior, native-library compatibility, recognition accuracy,
 latency, and offline deployment still require a real-device acceptance check.
+
+Supervisor tests spawn real processes with fake engines that permanently block in
+capture, model loading, transcription, and segment iteration. They verify deadlines,
+cancellation, child termination before retry, model reuse, unexpected worker exit,
+and prompt shutdown without opening a microphone or loading model weights.

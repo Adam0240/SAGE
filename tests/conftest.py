@@ -1,11 +1,39 @@
 # Assign category markers from the test directory so tests can be selected with pytest -m.
 
+import os
 from pathlib import Path
 
 import pytest
 
 
+@pytest.fixture(scope="session")
+def qt_app():
+    # Import Qt only for tests that use it; retain one widget-capable owner.
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance() or QApplication([])
+    assert isinstance(app, QApplication)
+    yield app
+
+
+@pytest.fixture(autouse=True)
+def _ensure_widget_application(request):
+    relative = Path(request.node.path).relative_to(Path(__file__).parent)
+    if relative.parts[0] == "ui":
+        request.getfixturevalue("qt_app")
+
 REQUIRED_TEST_MODULES = {
+    "unit/test_manual_diagnostics.py",
+    "ui/test_home_voice.py",
+    "unit/test_voice_command_service.py",
+    "unit/test_project_search_service.py",
+    "unit/test_print_remaining_time.py",
+    "unit/test_disk_cache.py",
+    "unit/test_supervised_speech_service.py",
+    "unit/test_setup_admin.py",
+    "unit/test_octoprint_library.py",
+    "integration/test_setup_admin_concurrency.py",
     "unit/test_speech_recognition_service.py",
     "unit/test_account_service.py",
     "unit/test_authentication_service.py",

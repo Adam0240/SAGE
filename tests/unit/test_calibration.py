@@ -4,7 +4,13 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
-from TouchControls.calibration import Calibration, check_points, fit_mapping, project, target_points
+from TouchControls.calibration import (
+    Calibration,
+    check_points,
+    fit_mapping,
+    project,
+    target_points,
+)
 
 
 def valid_calibration():

@@ -22,6 +22,7 @@ if __name__ == "__main__" and __package__ is None:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sage_apps.octoprint_file_dialog import OctoPrintFileDialog
+from services.disk_cache import user_cache_directory
 from services.gcode_preview_service import GcodePreviewService
 from services.gcode_preview_worker import PreviewLoader
 from services.octoprint_file_service import OctoPrintFileService
@@ -31,7 +32,7 @@ from TouchControls.widgets import scroll_controls
 
 # Normal launches browse OctoPrint. A local override supports standalone fixtures.
 GCODE_DIR = None
-THUMB_DIR = Path(__file__).resolve().parent / "thumbnails"
+THUMB_DIR = user_cache_directory()
 
 # Creates the screen where users will browse G-code files and start prints.
 class GcodeDisplayPrintApp(QWidget):
@@ -42,7 +43,8 @@ class GcodeDisplayPrintApp(QWidget):
     library_changed = Signal()
     library_status_changed = Signal(str)
 
-    def __init__(self, parent=None, *, gcode_dir=None, thumbnail_dir=None):
+    def __init__(self, parent=None, *, gcode_dir=None, thumbnail_dir=None,
+                 can_start_print=None, get_session=None):
         # Set up the QWidget and connect it to a parent widget if one is provided.
         super().__init__(parent)
         self.setProperty("sageTouchWindow", True)
@@ -58,13 +60,16 @@ class GcodeDisplayPrintApp(QWidget):
         self.remote_folders = {"": []}
         self.current_folder = ""
         self.selected_remote_file = None
+        self._preview_version = None
+        self._pending_voice_project = None
         self.library_loading = False
         self.library_message = ""
         self._file_validated = False
         self._awaiting_print = False
         self._manual_status = False
         self._status_checked_at = 0.0
-        self.print_service = OctoPrintPrintService(self)
+        self.print_service = OctoPrintPrintService(
+            self, can_start_print=can_start_print, get_session=get_session)
         self.print_service.completed.connect(self._print_completed)
         self.status_poll_timer = QTimer(self)
         self.status_poll_timer.setInterval(self.STATUS_POLL_INTERVAL_MS)
@@ -195,7 +200,7 @@ class GcodeDisplayPrintApp(QWidget):
             alignment=Qt.AlignmentFlag.AlignHCenter
         )
 
-        self.printer_status_service = PrinterStatusService(self)
+        self.printer_status_service = PrinterStatusService(self, include_job=True,)
         self.printer_status_service.completed.connect(self._printer_status_completed)
         self.printer_status_button = QPushButton("Printer Status")
         self.printer_status_button.setFixedSize(300, 55)
@@ -210,6 +215,22 @@ class GcodeDisplayPrintApp(QWidget):
         self.printer_status_label.setWordWrap(True)
         self.printer_status_label.setStyleSheet("color: white; font-size: 18px;")
         self.main_layout.addWidget(self.printer_status_label)
+        # Display the estimated remaining print time.
+        self.remaining_time_label = QLabel(
+            "Remaining time: Unavailable"
+        )
+
+        self.remaining_time_label.setAlignment(
+            Qt.AlignmentFlag.AlignCenter
+        )
+
+        self.remaining_time_label.setWordWrap(True)
+
+        self.remaining_time_label.setStyleSheet(
+            "color: white; font-size: 18px;"
+        )
+
+        self.main_layout.addWidget(self.remaining_time_label)
 
         # Enable only with a validated remote file and a fresh idle status.
         self.start_print_button = QPushButton("Start Print")
@@ -283,41 +304,123 @@ class GcodeDisplayPrintApp(QWidget):
 
     def _update_print_button(self):
         status = self.printer_status_service
+
+        authorized = self.print_service.can_start_print()
+
         file_available = (
-            self.gcode_dir is None and self.selected_remote_file is not None
-            and self._file_validated and not self.library_loading and not self.library_message
+            self.gcode_dir is None
+            and self.selected_remote_file is not None
+            and self._file_validated
+            and not self.library_loading
+            and not self.library_message
         )
+
         printer_ready = (
-            status.reply is None and status.status.ready
+            status.reply is None
+            and status.status.ready
             and status.source == self.file_service.library_source
-            and time.monotonic() - self._status_checked_at < self.STATUS_MAX_AGE_SECONDS
+            and time.monotonic() - self._status_checked_at
+            < self.STATUS_MAX_AGE_SECONDS
         )
+
         self.start_print_button.setEnabled(bool(
-            file_available and printer_ready and not self.print_service.busy and not self._awaiting_print
+            authorized
+            and file_available
+            and printer_ready
+            and not self.print_service.busy
+            and not self._awaiting_print
         ))
+
+        # Inform unauthorized users why printing is restricted.
+        self.start_print_button.setToolTip(
+            "Start the selected 3D print."
+            if authorized
+            else "Only the STEAM Specialist can start a 3D print."
+        )
 
     def _library_loaded(self, folders):
         self.library_loading = False
         self.library_message = ""
         self.remote_folders = folders
+
+        # Check for a project requested through voice interaction.
+        if self._pending_voice_project is not None:
+
+            path, source = self._pending_voice_project
+            self._pending_voice_project = None
+
+            # Locate the exact project in the current library.
+            selected_entry = next(
+                (
+                    entry
+                    for entries in folders.values()
+                    for entry in entries
+                    if not entry.is_folder
+                    and entry.path == path
+                ),
+                None,
+            )
+
+            # Verify the project belongs to the same OctoPrint server.
+            if source != self.file_service.library_source:
+                selected_entry = None
+                message = (
+                    "The OctoPrint server has changed. "
+                    "Please search for the project again."
+                )
+            else:
+                message = (
+                    "The requested project is no longer available."
+                )
+
+            if selected_entry is not None:
+                self.select_remote_file(selected_entry)
+            else:
+                self.selected_remote_file = None
+                self._file_validated = False
+                self.current_folder = ""
+                self.gcode_files = []
+                self.current_file_index = 0
+
+                self.filename_label.setText("No file selected")
+                self.preview_label.setText(message)
+
+            self._update_navigation()
+            self.library_changed.emit()
+            return
+
+        # Continue with normal library loading.
         if self.current_folder not in folders:
             self.current_folder = ""
-        self.gcode_files = [entry for entry in folders[self.current_folder] if not entry.is_folder]
+
+        self.gcode_files = [
+            entry
+            for entry in folders[self.current_folder]
+            if not entry.is_folder
+        ]
+
         if self.selected_remote_file in self.gcode_files:
-            self.current_file_index = self.gcode_files.index(self.selected_remote_file)
+            self.current_file_index = self.gcode_files.index(
+                self.selected_remote_file
+            )
         else:
             self.current_file_index = 0
             self.selected_remote_file = None
+
         if self.gcode_files:
             self.update_selected_file()
         else:
             self.filename_label.setText("No file selected")
-            self.preview_label.setText("Open View File List to browse OctoPrint folders.")
+            self.preview_label.setText(
+                "Open View File List to browse OctoPrint folders."
+            )
+
         self._update_navigation()
         self.library_changed.emit()
 
     def _remote_file_ready(self, entry, path):
         if entry == self.selected_remote_file:
+            self._preview_version = self.file_service.ready_version
             self._file_validated = True
             self._update_print_button()
             self.display_gcode_preview(path)
@@ -329,9 +432,38 @@ class GcodeDisplayPrintApp(QWidget):
             self.library_message = message
             self._update_navigation()
             self.library_status_changed.emit(message)
+        if self._pending_voice_project is not None:
+            self._pending_voice_project = None
+            self.filename_label.setText("No file selected")
         self.preview_label.setText(message)
         self._update_print_button()
 
+    def open_voice_project(self, path, source):
+        """Load a project selected through voice interaction."""
+
+        if self.print_service.busy:
+            return
+
+        if self.gcode_dir is not None:
+            self.preview_label.setText(
+                "Voice project selection requires OctoPrint."
+            )
+            return
+
+        # Store the requested project until the library is loaded.
+        self._pending_voice_project = (path, source)
+
+        # Clear the previous selection.
+        self.selected_remote_file = None
+        self._file_validated = False
+        self.gcode_files = []
+        self.current_file_index = 0
+
+        self.filename_label.setText(path)
+
+        # Refresh the library before selecting the requested project.
+        self.load_gcode_files()
+    
     def select_remote_file(self, entry):
         if self.print_service.busy:
             return
@@ -353,13 +485,28 @@ class GcodeDisplayPrintApp(QWidget):
 
     def _printer_status_completed(self, message):
         self._status_checked_at = time.monotonic()
+
         status = self.printer_status_service.status
-        if status.busy or (self._manual_status and status.ready):
+
+        if status.busy or (
+            self._manual_status and status.ready
+        ):
             self._awaiting_print = False
-        if self._manual_status and (status.ready or status.busy):
+
+        if self._manual_status and (
+            status.ready or status.busy
+        ):
             self.print_message_label.hide()
+
         self._manual_status = False
+
         self.printer_status_label.setText(message)
+
+        # Update the estimated remaining print time.
+        self.remaining_time_label.setText(
+            status.remaining_time_message
+        )
+
         self.printer_status_button.setEnabled(True)
         self._update_print_button()
 
@@ -373,10 +520,18 @@ class GcodeDisplayPrintApp(QWidget):
         self.printer_status_button.setEnabled(False)
         self.start_print_button.setText("Starting…")
         self.print_message_label.hide()
-        self.print_service.start(self.selected_remote_file, self.file_service.library_source)
+        self.print_service.start(self.selected_remote_file, self.file_service.library_source,
+                                 self._preview_version)
         self._update_navigation()
 
     def _print_completed(self, result, message):
+        if result == "file_changed":
+            self._file_validated = False
+            self._preview_version = None
+            self.preview_loader.cancel()
+            self._preview_request = -1
+            self._preview_path = None
+            self.preview_label.setText(message)
         self._awaiting_print = result in ("accepted", "unknown")
         self.start_print_button.setText("Start Print")
         self.printer_status_button.setEnabled(True)
@@ -387,12 +542,17 @@ class GcodeDisplayPrintApp(QWidget):
             self.check_printer_status(manual=False)
 
     def _stop_background_work(self):
+        # Cancel any pending voice-selected project.
+        self._pending_voice_project = None
         self.status_poll_timer.stop()
         self.printer_status_service.cancel()
         self.print_service.cancel_preflight()
         self.start_print_button.setEnabled(False)
         self.preview_loader.cancel()
         self.file_service.cancel()
+        self.remaining_time_label.setText(
+        "Remaining time: Unavailable"
+    )
 
     # Return to the owning home screen before this window closes.
     def closeEvent(self, event):
@@ -568,6 +728,7 @@ class GcodeDisplayPrintApp(QWidget):
     def update_selected_file(self):
         selected_file = self.gcode_files[self.current_file_index]
         if self.gcode_dir is None:
+            self._preview_version = None
             self._file_validated = False
             self._update_print_button()
             self.preview_loader.cancel()

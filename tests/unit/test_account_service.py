@@ -2,12 +2,12 @@
 
 import unittest
 from unittest.mock import Mock, call, patch
+
+from database.account_operations import list_accounts
 from database.models import User
 from database.user_repository import UserRepository
 from services.account_service import AccountService
 from services.password_service import PasswordService
-from database.account_operations import list_accounts
-
 
 ROLES = ("boss_admin", "steam_specialist", "base_specialist")
 
@@ -339,3 +339,30 @@ class TestAccountListing(unittest.TestCase):
         ):
             self.assertEqual(list_accounts(1), [(1, "Specialist", "specialist", "steam_specialist", True)])
         service.list_accounts.assert_called_once_with(1)
+
+
+class TestPrintPermission(unittest.TestCase):
+    def test_fresh_account_state_and_session_cleanup(self):
+        from database.account_operations import has_print_permission
+
+        with patch("database.account_operations.SessionLocal") as sessions:
+            database = sessions.return_value.__enter__.return_value
+            for role, active, expected in (
+                ("steam_specialist", True, True),
+                ("steam_specialist", False, False),
+                ("boss_admin", True, False),
+                ("base_specialist", True, False),
+            ):
+                with self.subTest(role=role, active=active):
+                    database.get.return_value = User(id=7, role=role, is_active=active)
+                    self.assertEqual(has_print_permission(7), expected)
+                    database.get.assert_called_with(User, 7)
+            database.get.return_value = None
+            self.assertFalse(has_print_permission(7))
+            self.assertEqual(sessions.call_count, 5)
+            self.assertEqual(sessions.return_value.__exit__.call_count, 5)
+
+            database.get.side_effect = RuntimeError("database unavailable")
+            with self.assertRaises(RuntimeError):
+                has_print_permission(7)
+            self.assertEqual(sessions.return_value.__exit__.call_count, 6)

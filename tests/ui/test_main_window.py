@@ -1,18 +1,20 @@
 # Tests default window behavior and login/logout workflows with dialogs mocked.
 
-import unittest
 import tempfile
+import unittest
 from pathlib import Path
 from unittest.mock import patch
+
 import pytest
-from PySide6.QtCore import Qt, QTimer, QEvent
+from PySide6.QtCore import QEvent, Qt, QTimer
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog, QLineEdit
 from shiboken6 import isValid
+
 from login_dialog import LoginDialog
-from sage_apps.account_management_app import AccountManagementDialog
 from main import SageWindow
 from sage_apps import gcode_display_print_app as gcode_app
+from sage_apps.account_management_app import AccountManagementDialog
 
 
 class TestStartup(unittest.TestCase):
@@ -120,6 +122,18 @@ class TestGcodeNavigation(unittest.TestCase):
         self.window.close()
         self.assertFalse(self.window.isVisible())
         self.assertFalse(self.window.gcode_window.isVisible())
+
+    def test_viewer_print_revocation_invalidates_launcher_session(self):
+        self.window.session_state = self.window.session_service.log_in(7, "Staff", "steam_specialist")
+        session = self.window.session_state
+        self.window.app_buttons[0].setEnabled(True)
+        self.window.open_gcode_app()
+        service = self.window.gcode_window.print_service
+        self.assertIs(service.get_session(), session)
+        service.authorization_revoked.emit(session)
+        self.assertFalse(service.can_start_print())
+        self.assertEqual(self.window.mode_button.text(), "Student Mode")
+        self.assertFalse(self.window.app_buttons[0].isEnabled())
 
 
 ROLES = (
@@ -275,6 +289,19 @@ class TestLoginWorkflow(unittest.TestCase):
         with patch("main.AccountManagementDialog", autospec=True) as dialog_class:
             self.window.open_account_management()
             dialog_class.assert_not_called()
+
+    def test_revoked_print_session_returns_to_student_mode_only_for_current_login(self):
+        self.log_in("steam_specialist")
+        revoked = self.window.session_state
+        self.window.invalidate_print_session(revoked)
+        self.assertEqual(self.window.session_state.mode, "student")
+        self.assertEqual(self.window.mode_button.text(), "Student Mode")
+        self.assertFalse(self.window.app_buttons[0].isEnabled())
+        self.log_in("steam_specialist")
+        replacement = self.window.session_state
+        self.window.invalidate_print_session(revoked)
+        self.assertIs(self.window.session_state, replacement)
+        self.assertTrue(self.window.app_buttons[0].isEnabled())
 
     # Tests that account management receives the authenticated ID and role for all staff roles.
     def test_account_dialog_identity(self):

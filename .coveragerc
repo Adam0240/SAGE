@@ -1,8 +1,11 @@
 [run]
 source =
     main
+    login_dialog
     sage_apps
     services
+    database
+    TouchControls
 relative_files = False
 branch = True
 

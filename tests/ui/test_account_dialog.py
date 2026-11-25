@@ -1,12 +1,14 @@
 # Tests account forms and threaded failure recovery with database calls mocked.
 
-import time, unittest
+import time
+import unittest
 from unittest.mock import Mock, patch
-from PySide6.QtCore import QThread
+
+from PySide6.QtCore import QEvent, QThread, QTimer
 from PySide6.QtWidgets import QApplication, QMessageBox
-from sage_apps.account_management_app import AccountManagementDialog
 from sqlalchemy.exc import IntegrityError
 
+from sage_apps.account_management_app import AccountManagementDialog
 
 SELF = (1, "Specialist", "specialist", "steam_specialist", True)
 
@@ -142,10 +144,31 @@ class TestAccountDialog(unittest.TestCase):
 
 
 class TestAccountThreadLifecycle(unittest.TestCase):
+    def test_repeated_modal_operations_finish_before_close(self):
+        for index in range(25):
+            with self.subTest(iteration=index), patch(
+                    "sage_apps.account_management_app.update_account",
+                    side_effect=PermissionError("Denied") if index % 2 else None):
+                dialog = AccountManagementDialog(2, "base_specialist")
+
+                def start():
+                    dialog._start_operation("update", target_id=2, password="long-test-password")
+                    self.assertFalse(dialog.close())
+                    dialog._thread.finished.connect(dialog.accept)
+
+                QTimer.singleShot(0, start)
+                dialog.exec()
+                self.assertIsNone(dialog._thread)
+                self.assertIsNone(dialog._worker)
+                self.assertTrue(dialog.tabs.isEnabled())
+                dialog.deleteLater()
+                self.app.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
     # Timed-out changes are not retried automatically; the dialog can close after worker cleanup.
     def test_timeout_restores_account_controls_without_retrying(self):
-        from psycopg.errors import QueryCanceled, LockNotAvailable
+        from psycopg.errors import LockNotAvailable, QueryCanceled
         from sqlalchemy.exc import OperationalError
+
         from database.timeouts import DatabaseWaitTimeout
         for error in (QueryCanceled, LockNotAvailable, DatabaseWaitTimeout):
             with self.subTest(error=error.__name__), patch(

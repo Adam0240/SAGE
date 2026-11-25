@@ -51,6 +51,8 @@ See [speech setup and troubleshooting](services/SPEECH.md) for device checks, of
 
 ### OctoPrint
 
+Staff sessions use manual logout. Staff should return SAGE to Student Mode before leaving the workstation; navigation between apps preserves the signed-in session.
+
 Add these settings to the project-root `.env` file:
 
 ```dotenv
@@ -61,6 +63,8 @@ OCTOPRINT_API_KEY=YOUR_API_KEY
 The API key needs `FILES_LIST` and `FILES_DOWNLOAD` for browsing, `STATUS` for printer status, and `FILES_SELECT` and `PRINT` to start printing. The viewer uses files uploaded to OctoPrint, not files on the printer's SD card.
 
 **Print safety:** **Start Print** is available only when the printer is connected and idle. Requests are not automatically retried. If a print request times out, check OctoPrint and confirm printer status before trying again; leaving the viewer does not stop a print already submitted.
+
+Downloaded G-code and preview images are cached under `SAGE` in Qt's per-user cache location, so normal use does not require writes to the installation directory. Cache cleanup retains up to 512 MiB/128 downloaded files and 64 MiB/512 preview images, expiring inactive entries after 30 days. Active downloads, selections, and rendering sources are protected with entry locks and may temporarily exceed those budgets. Cleanup runs during cache use and release; it only removes SAGE-owned entries, leaving legacy caches and unrelated files alone. If storage is full or unavailable, downloads report a cache error; image previews can still render without saving a PNG.
 
 ### Camera controls
 

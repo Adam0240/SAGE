@@ -217,6 +217,9 @@ class SageWindow(QWidget):
         self.voice_controller.button_changed.connect(self.update_voice_button)
         self.voice_controller.avatar_changed.connect(self.avatar.setText)
         self.voice_controller.error_occurred.connect(self.show_voice_error)
+        self.voice_controller.project_open_requested.connect(
+            self.open_voice_project
+        )
         self.talk_button.clicked.connect(self.voice_controller.toggle_speech)
 
 
@@ -317,19 +320,72 @@ class SageWindow(QWidget):
         finally:
             dialog.deleteLater()
 
-    # Reuse the viewer so returning home does not discard the selected file.
     def open_gcode_app(self):
+        """Open the 3D printing application normally."""
+        self._open_gcode_app()
+
+
+    @Slot(str, str)
+    def open_voice_project(self, path, source):
+        """Open a project selected through a voice command."""
+        self._open_gcode_app(project=(path, source))
+
+
+    # Reuse the viewer so returning home does not discard the selected file.
+    def _open_gcode_app(self, project=None):
         if self._closing:
             return
+
+        # Prevent changing projects while submitting a print.
+        if (
+            project is not None
+            and self.gcode_window is not None
+            and self.gcode_window.print_service.busy
+        ):
+            self.voice_controller.speak_response(
+                "A print request is currently being processed."
+            )
+            return
+
         self.voice_controller.cancel()
+
         if self.gcode_window is None:
-            self.gcode_window = GcodeDisplayPrintApp(parent=self)
-            self.gcode_window.setWindowFlag(Qt.WindowType.Window, True)
-            self.gcode_window.home_requested.connect(self.show_home)
+            self.gcode_window = GcodeDisplayPrintApp(
+                parent=self,
+                can_start_print=lambda: (
+                    not self._closing
+                    and self.session_state.can_start_print
+                ),
+                get_session=lambda: self.session_state,
+            )
+            self.gcode_window.print_service.authorization_revoked.connect(
+                self.invalidate_print_session)
+
+            self.gcode_window.setWindowFlag(
+                Qt.WindowType.Window, True
+            )
+
+            self.gcode_window.home_requested.connect(
+                self.show_home
+            )
+
         self.gcode_window.show()
         self.gcode_window.raise_()
         self.gcode_window.activateWindow()
+
+        # Open the project requested through voice interaction.
+        if project is not None:
+            self.gcode_window.open_voice_project(*project)
+
         self.hide()
+
+    @Slot(object)
+    def invalidate_print_session(self, session):
+        # A late result must never log out a replacement staff session.
+        if self.session_state is session:
+            self.session_state = self.session_service.log_out()
+            self.mode_button.setText(self.session_state.button_label)
+            self.app_buttons[0].setEnabled(False)
 
     # Reuse the guide so returning home preserves the question and response.
     def open_steamguide_app(self):
@@ -387,12 +443,20 @@ class SageWindow(QWidget):
 
 
 if __name__ == "__main__":
+    # Support the speech subprocess in Windows packaged builds.
+    from multiprocessing import freeze_support
+    freeze_support()
     # Start the Qt application.
     app = QApplication(sys.argv)
 
     # Create the SAGE window and display it.
     window = SageWindow()
     window.show()
+
+    # Provide a voice greeting when SAGE starts.
+    QTimer.singleShot(
+        0, window.voice_controller.speak_startup_greeting
+    )
 
     # Keep the application running so it can respond to user input.
     sys.exit(app.exec())

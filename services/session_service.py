@@ -22,6 +22,14 @@ class SessionState:
 
         return ROLE_LABELS[self.mode]
 
+    @property
+    def can_start_print(self) -> bool:
+        # Only an authenticated STEAM Specialist can start a print.
+        return (
+            self.user_id is not None
+            and self.mode == "steam_specialist"
+        )
+
 
 class SessionService:
     def start(self) -> SessionState:

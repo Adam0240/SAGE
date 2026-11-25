@@ -3,7 +3,7 @@
 
 from pathlib import Path
 from queue import Empty, Queue
-from threading import Event, Thread
+from threading import BoundedSemaphore, Event, Thread
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
@@ -11,13 +11,22 @@ from services.ai_assistant_service import AIAssistantService
 from services.document_retrieval_service import DocumentRetrievalService
 from services.guide_response_service import GuideResponse, GuideResponseService
 
+# Shared across Home and guide instances, including destroyed/reopened widgets.
+_AI_SLOTS = BoundedSemaphore(2)
+
+
+def _bounded_response(*args):
+    try:
+        generate_response(*args)
+    finally:
+        _AI_SLOTS.release()
 
 def generate_response(question, directory, request_id, cancelled, results, shutdown):
     """Generate an answer without accessing any Qt widgets."""
     if cancelled.is_set() or shutdown.is_set():
         return
     try:
-        retrieval = DocumentRetrievalService(directory)
+        retrieval = DocumentRetrievalService(directory, refresh_on_init=False)
 
         try:
             assistant = AIAssistantService(retrieval)
@@ -86,21 +95,23 @@ class AIResponseLoader(QObject):
         self.request_id += 1
         self.cancelled.set()
         self.pending = None
-        # The abandoned daemon owns only Python data, so it can finish without
-        # blocking a new question or the destruction of the guide.
+        # The abandoned daemon retains its global slot until it exits. Reopening
+        # can use the second slot; further replacements wait without blocking Qt.
         self.thread = None
         self.timer.stop()
 
     def _start_pending(self):
         if self.thread is not None or self.pending is None:
             return
+        if not _AI_SLOTS.acquire(blocking=False):
+            return  # Keep only the latest pending question; polling stays responsive.
 
         request_id, question, directory = self.pending
         self.pending = None
         self.cancelled = Event()
 
         self.thread = Thread(
-            target=generate_response,
+            target=_bounded_response,
             args=(
                 question,
                 directory,
@@ -112,7 +123,13 @@ class AIResponseLoader(QObject):
             daemon=True,
         )
 
-        self.thread.start()
+        try:
+            self.thread.start()
+        except Exception:
+            _AI_SLOTS.release()
+            self.thread = None
+            self.results.put((request_id, GuideResponse(
+                "Unable to start the assistant. Please try again.")))
 
     def _poll(self):
         # Determine whether the previous request has finished.

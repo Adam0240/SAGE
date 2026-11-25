@@ -2,10 +2,14 @@
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QDialog, QHBoxLayout, QVBoxLayout, QPushButton, QListWidget,
-    QListWidgetItem, QWidget,
+    QDialog,
+    QHBoxLayout,
+    QListWidget,
+    QListWidgetItem,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
 )
-
 
 TOUCH_STYLE = """
     QDialog { background: black; color: white; }

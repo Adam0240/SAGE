@@ -2,8 +2,7 @@
 """Unit tests for SAGE's text-to-speech service."""
 
 import pytest
-
-from PySide6.QtCore import QObject, Signal, QCoreApplication
+from PySide6.QtCore import QObject, Signal
 from PySide6.QtTextToSpeech import QTextToSpeech
 
 from services.text_to_speech_service import TextToSpeechService
@@ -58,12 +57,6 @@ class FakeSpeechEngine(QObject):
         return self.error_message
 
 
-@pytest.fixture(scope="module")
-def qt_app():
-    """Provide a Qt application for signal testing."""
-    return QCoreApplication.instance() or QCoreApplication([])
-
-
 @pytest.fixture
 def speech_service(qt_app):
     """Create the speech service with a fake engine."""
@@ -110,16 +103,15 @@ def test_stop_playback(speech_service):
     assert engine.stop_count == 1
 
 
-def test_replay_previous_response(speech_service):
+@pytest.mark.parametrize("utterances", [
+    ["Welcome to the STEAM Room."], ["First response.", "Second response."],
+])
+def test_replay_latest_response(speech_service, utterances):
     service, engine = speech_service
-
-    service.speak("Welcome to the STEAM Room.")
-
+    for utterance in utterances:
+        service.speak(utterance)
     assert service.replay() is True
-    assert engine.spoken_text == [
-        "Welcome to the STEAM Room.",
-        "Welcome to the STEAM Room.",
-    ]
+    assert engine.spoken_text == utterances + [utterances[-1]]
 
 
 def test_replay_without_previous_response(speech_service):
@@ -127,20 +119,6 @@ def test_replay_without_previous_response(speech_service):
 
     assert service.replay() is False
     assert engine.spoken_text == []
-
-
-def test_speak_replaces_previous_response(speech_service):
-    service, engine = speech_service
-
-    service.speak("First response.")
-    service.speak("Second response.")
-    service.replay()
-
-    assert engine.spoken_text == [
-        "First response.",
-        "Second response.",
-        "Second response.",
-    ]
 
 
 def test_is_speaking(speech_service):

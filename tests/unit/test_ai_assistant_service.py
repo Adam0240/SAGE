@@ -5,9 +5,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import pytest
+
 from services.ai_assistant_service import AIAssistantService
 from services.document_retrieval_service import DocumentRetrievalService
-
+from services.guide_response_service import GuideResponseService
 
 DOCUMENTS = Path(__file__).resolve().parents[2] / "STEAM_Tutorials"
 
@@ -34,6 +36,7 @@ def test_documented_question_generates_answer():
     assert "3DPrinter_Snapmaker2.0.md" in response.sources[0]
     assert "OctoPrint Is Not Connecting" in response.sources[0]
     assert fake_ollama.chat.call_count == 1
+    assert "AI-generated summary" in response.markdown
 
     # Confirm the actual documentation was supplied to Ollama.
     messages = fake_ollama.chat.call_args.kwargs["messages"]
@@ -100,6 +103,8 @@ def test_original_safety_instructions_are_preserved(tmp_path):
 
     assert "Ask staff before touching the hot nozzle" in response.markdown
     assert "Stop the printer and ask staff" in response.markdown
+    assert "Ask staff before touching the hot nozzle" in response.spoken_text
+    assert "Stop the printer and ask staff" in response.spoken_text
     assert response.sources == ("printer.md → Filament jam",)
 
 
@@ -120,3 +125,37 @@ def test_undocumented_settings_are_rejected():
     assert "0.4 mm" not in response.markdown
     assert "does not confirm" in response.markdown
     assert response.sources
+
+
+@pytest.mark.parametrize("answer", [
+    "Stop printing.",  # Omits both supervision and the specific caution.
+    "Heat the nozzle to 999 C and remove the cover.",  # Unrecognized units.
+    "Set the temperature to nine hundred degrees.",
+    "Set the power to 999.",  # Unitless setting.
+    "Remove the cover while the printer runs.",  # Invented nonnumeric action.
+    "Set the nozzle diameter to 0.2 mm.",  # Documented number, wrong setting.
+    "Set layer height to 0.4 mm.",  # Recognized unsupported setting.
+    "",  # Empty-answer fallback must preserve the same cautions.
+    None,
+])
+def test_speech_preserves_full_reference_instead_of_generated_procedures(tmp_path, answer):
+    (tmp_path / "printer.md").write_text(
+        "# Printer\nStaff supervision is required.\n"
+        "## Filament jam\nStop the printer and ask staff.\n"
+        "Do not remove the cover while the printer runs.\n"
+        "The documented layer height is 0.2 mm.\n", encoding="utf-8")
+    # Partial read failures must also remain audible, including on AI success.
+    (tmp_path / "unreadable.md").write_bytes(b"\xff")
+    retrieval = DocumentRetrievalService(tmp_path)
+    expected = GuideResponseService().respond("filament jam", retrieval.search("filament jam"))
+    client = Mock()
+    client.chat.return_value = SimpleNamespace(message=SimpleNamespace(content=answer))
+    response = AIAssistantService(retrieval, client=client).respond("filament jam")
+    client.chat.assert_called_once()
+    assert response.spoken_text == expected.spoken_text
+    assert "Staff supervision is required." in response.spoken_text
+    assert "Do not remove the cover" in response.spoken_text
+    assert "may be incomplete" in response.spoken_text
+    assert response.sources == expected.sources
+    assert "Staff supervision is required." in response.markdown
+    assert "Do not remove the cover" in response.markdown

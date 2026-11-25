@@ -3,7 +3,7 @@
 import multiprocessing
 import time
 
-from PySide6.QtCore import QObject, QTimer, Qt, Signal, Slot
+from PySide6.QtCore import QObject, Qt, QTimer, Signal, Slot
 
 
 def capture_process(connection, camera_index, model_path):

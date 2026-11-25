@@ -1,19 +1,36 @@
 """Shared camera input for SAGE's registered windows and owned dialogs."""
 
-from contextlib import contextmanager
 import time
+from contextlib import contextmanager
 
-from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QPersistentModelIndex, QRectF, Qt, QTimer, Signal
+from PySide6.QtCore import (
+    QEvent,
+    QObject,
+    QPersistentModelIndex,
+    QPoint,
+    QPointF,
+    QRectF,
+    Qt,
+    QTimer,
+    Signal,
+)
 from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import (
-    QApplication, QWidget, QAbstractButton, QLineEdit, QComboBox, QTabBar, QListWidget, QDialog,
+    QAbstractButton,
+    QApplication,
+    QComboBox,
+    QDialog,
+    QLineEdit,
+    QListWidget,
+    QTabBar,
+    QWidget,
 )
 from shiboken6 import isValid
 
-from TouchControls.calibration import Calibration, DEFAULT_CALIBRATION_PATH
-from TouchControls.paths import DEFAULT_MODEL_PATH
+from TouchControls.calibration import DEFAULT_CALIBRATION_PATH, Calibration
 from TouchControls.camera_worker import CameraWorker
 from TouchControls.dwell import DwellTracker
+from TouchControls.paths import DEFAULT_MODEL_PATH
 from TouchControls.widgets import TouchChoices
 
 
