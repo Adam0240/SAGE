@@ -54,7 +54,7 @@ class GcodePreviewService:
             # time, and size. Changed details produce a different PNG filename.
             file_details = file_path.stat()
             preview_key = (
-                f"absolute-xy-v2|{file_path.resolve()}|"
+                f"absolute-xy-v3|{file_path.resolve()}|"
                 f"{file_details.st_mtime_ns}|"
                 f"{file_details.st_size}"
             )

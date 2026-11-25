@@ -42,6 +42,21 @@ class TestGcodeParser(unittest.TestCase):
             with self.subTest(command=command), self.assertRaises(UnsupportedGcodeError):
                 read_gcode_coordinates(self.write_gcode("G1 X10 Y10\n" + command + "\nG1 X5 Y0\n"))
 
+    def test_slicer_startup_homing_uses_first_absolute_xy_position(self):
+        for home in ("G28", "g28 x y", "G28 X0 Y0 Z0", "G28 Z"):
+            with self.subTest(home=home):
+                path = self.write_gcode(
+                    "M104 S210\nM140 S65\n" + home + "\nG90\nG1 X-10 Y-10 F3000\n"
+                    "G1 Z0 F1800\nM109 S210\nM190 S65\nG92 E0\nG1 E20 F200\n"
+                    "G92 E0\nM82\nG1 X10 Y20\nG1 X30\n")
+                self.assertEqual(read_gcode_coordinates(path), [(-10, -10), (10, 20), (30, 20)])
+
+    def test_startup_homing_does_not_guess_unknown_axis_coordinates(self):
+        for home, move in (("G28", "G1 X10"), ("G28 X", "G1 Y20"), ("G28 Y", "G1 X10")):
+            with self.subTest(home=home, move=move), self.assertRaisesRegex(
+                    UnsupportedGcodeError, "homed XY axis"):
+                read_gcode_coordinates(self.write_gcode(home + "\n" + move + "\nG1 X30 Y30\n"))
+
 
     # Tests empty files and files containing only unsupported commands return no positions.
     def test_no_supported_movements(self):

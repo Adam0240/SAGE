@@ -141,11 +141,6 @@ class GcodeDisplayPrintApp(QWidget):
 
         # Give the preview the extra vertical space as the window grows.
         self.main_layout.addWidget(self.preview_label, stretch=1)
-        preview_notice = QLabel(
-            "Approximate absolute-millimetre XY preview; not a toolpath safety check. Review in the slicer.")
-        preview_notice.setWordWrap(True)
-        preview_notice.setStyleSheet("color: white; font-size: 16px;")
-        self.main_layout.addWidget(preview_notice)
 
         # Arrange the previous button, filename, and next button in one row.
         self.file_navigation_layout = QHBoxLayout()

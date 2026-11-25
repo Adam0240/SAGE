@@ -5,16 +5,21 @@ from pathlib import Path
 from PySide6.QtCore import QObject, QTimer, Signal, Slot
 
 from services.ai_response_worker import AIResponseLoader
-from services.octoprint_file_service import OctoPrintFileService
-from services.printer_status_service import PrinterStatusService
-from services.project_search_service import ProjectSearchService
-from services.supervised_speech_service import SupervisedSpeechRecognitionService
+from services.speech_recognition_service import SpeechRecognitionService
 from services.text_to_speech_service import TextToSpeechService
+from services.octoprint_file_service import OctoPrintFileService
+from services.project_search_service import ProjectSearchService
 from services.voice_command_service import VoiceCommandService
+from services.printer_status_service import PrinterStatusService
 
+class HomeSpeechRecognitionService(SpeechRecognitionService):
+    """Notify the home screen when automatic capture ends, before Whisper runs."""
 
-class HomeSpeechRecognitionService(SupervisedSpeechRecognitionService):
-    """Home uses a recoverable process for microphone and model ownership."""
+    def _capture_audio(self):
+        on_captured = self.on_captured
+        audio = super()._capture_audio()
+        on_captured()
+        return audio
 
 
 class HomeVoiceController(QObject):
@@ -40,7 +45,6 @@ class HomeVoiceController(QObject):
             silence_duration=2.5,
             silence_threshold=0.005,
         )
-        self.destroyed.connect(self.speech_service.shutdown)
         self._speech_request_id = 0
         self._speech_busy = False
 
@@ -242,6 +246,7 @@ class HomeVoiceController(QObject):
             self._set_button(self._button_text, True)
             return
 
+        print(f"User: {question}")
         self._set_button("SAGE is thinking...", False)
 
         self.start_thinking_animation()
@@ -347,6 +352,7 @@ class HomeVoiceController(QObject):
         else:
             response = message
 
+        print(f"SAGE answer: {response}")
 
         self.speak_response(response)
     
@@ -397,6 +403,7 @@ class HomeVoiceController(QObject):
     def open_selected_project(self, entry):
         """Request that SAGE display the selected OctoPrint project."""
 
+        print(f"Opening saved project: {entry.path}")
 
         self.project_open_requested.emit(
             entry.path,
@@ -415,6 +422,7 @@ class HomeVoiceController(QObject):
 
         self._set_button("Searching projects...", False)
 
+        print(f"Searching saved projects for: {query}")
 
         self.project_file_service.load_library()
 
@@ -455,6 +463,7 @@ class HomeVoiceController(QObject):
             matches,
         )
 
+        print(f"SAGE answer: {response}")
 
         self.speak_response(response)
 
@@ -490,6 +499,7 @@ class HomeVoiceController(QObject):
 
         answer = response.spoken_text or response.markdown
 
+        print(f"SAGE answer: {answer}")
 
         self.speak_response(answer)
 
@@ -586,10 +596,6 @@ class HomeVoiceController(QObject):
         self._speech_busy = False
 
         self._set_button("Talk to SAGE", not self._closing)
-        # Clear the gate before aborting: cancellation may finish a reply inline.
-        # PrinterStatusService rejects replies from cancelled requests by identity.
-        self._printer_status_pending = False
-        self.printer_status_service.cancel()
         self.ai_loader.cancel()
         self._voice_ai_request = 0
 
@@ -600,6 +606,10 @@ class HomeVoiceController(QObject):
         self._project_search_source = ""
 
         self.project_file_service.cancel()
+
+        # Cancel any active printer status request.
+        self._printer_status_pending = False
+        self.printer_status_service.cancel()
 
         self._awaiting_tts_completion = False
         self.stop_thinking_animation()
@@ -625,4 +635,3 @@ class HomeVoiceController(QObject):
         """Prevent new work and cancel the active voice interaction."""
         self._closing = True
         self.cancel()
-        self.speech_service.shutdown()

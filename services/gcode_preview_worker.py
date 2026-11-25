@@ -21,8 +21,10 @@ def render_preview(service, path, request, cancelled, results):
         result = service.get_preview(path, cancel_event=cancelled)
     except PreviewCancelled:
         result = None
-    except UnsupportedGcodeError:
-        result = "Preview unavailable: unsupported G-code coordinate mode or movement. Review the toolpath in the slicer."
+    except UnsupportedGcodeError as error:
+        detail = f" ({error})" if str(error) else ""
+        result = ("Preview unavailable: unsupported G-code coordinate mode or movement"
+                  f"{detail}. Review the toolpath in the slicer.")
     except UnreadableGcodeError:
         result = "Unable to read this G-code file."
     except NoPreviewableMovementError:

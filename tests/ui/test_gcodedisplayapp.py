@@ -410,6 +410,14 @@ class TestGcodeDisplayApp(unittest.TestCase):
         self.assertIn("unsupported G-code", self.window.preview_label.text())
         self.assertTrue(self.window.preview_label.pixmap().isNull())
 
+    def test_normal_slicer_homing_startup_displays_preview(self):
+        path = self.write_gcode("startup.gcode", "M104 S210\nG28\nG90\n"
+                                "G1 X-10 Y-10 F3000\nG92 E0\nG1 X10 Y20\nG1 X30 Y40\n")
+        self.window.display_gcode_preview(path)
+        self.wait_for_preview()
+        self.assertFalse(self.window.preview_label.pixmap().isNull())
+        self.assertNotIn("unavailable", self.window.preview_label.text())
+
     # Tests displayed images fit within the preview area while preserving their proportions.
     def test_preview_image_scaling(self):
         self.window.preview_label.resize(400, 300)
