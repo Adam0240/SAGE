@@ -130,8 +130,12 @@ def activate_window(s, window):
     s.controller.use_window(selected)
 
 
-def test_dwell_opens_guide_once_and_home_requires_new_dwell(setup):
+@pytest.mark.parametrize("start_full_screen", [False, True])
+def test_dwell_opens_guide_once_and_home_requires_new_dwell(setup, start_full_screen):
     s = setup
+    if start_full_screen:
+        s.window.showFullScreen()
+        activate_window(s, s.window)
     point = center(s.window.app_buttons[2])
     observe(s, point, 10)
     assert s.window.steamguide_window is None
@@ -144,6 +148,9 @@ def test_dwell_opens_guide_once_and_home_requires_new_dwell(setup):
     assert guide.isVisible()
     guide.home_button.click()
     activate_window(s, s.window)
+    assert s.window.isFullScreen()
+    # Returning Home can change its geometry from windowed to full screen.
+    point = center(s.window.app_buttons[2])
     observe(s, point, 5)
     assert s.window.isVisible()
     assert 0 < s.controller.dwell.progress < 1, input_state(s)
