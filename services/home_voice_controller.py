@@ -5,12 +5,13 @@ from pathlib import Path
 from PySide6.QtCore import QObject, QTimer, Signal, Slot
 
 from services.ai_response_worker import AIResponseLoader
+from services.octoprint_file_service import OctoPrintFileService
+from services.printer_status_service import PrinterStatusService
+from services.project_search_service import ProjectSearchService
 from services.speech_recognition_service import SpeechRecognitionService
 from services.text_to_speech_service import TextToSpeechService
-from services.octoprint_file_service import OctoPrintFileService
-from services.project_search_service import ProjectSearchService
 from services.voice_command_service import VoiceCommandService
-from services.printer_status_service import PrinterStatusService
+
 
 class HomeSpeechRecognitionService(SpeechRecognitionService):
     """Notify the home screen when automatic capture ends, before Whisper runs."""
