@@ -70,7 +70,8 @@ def test_voice_cycle(voice, manual_stop, capsys):
     assert w.voice_controller.thinking_timer.isActive()
     w.voice_controller.on_voice_ai_response(7, SimpleNamespace(spoken_text="Answer", markdown="Answer"))
     output = capsys.readouterr().out
-    assert "Help with filament" not in output and "Answer" not in output
+    assert "User: Help with filament" in output
+    assert "SAGE answer: Answer" in output
     voice.tts.speak.assert_called_once_with("Answer")
     assert_button(w, "Talk to SAGE", True)
     assert w.voice_controller.thinking_timer.isActive()
